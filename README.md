@@ -1,0 +1,74 @@
+This repo contains some Rust cli tools for working with new-line delimited geojson
+
+## Current
+
+## ndjson-spatial
+
+```bash
+    ndjson-spatial centroid
+````
+
+```bash
+    ndjson-spatial intersection --ref <reference-file.geo.json>
+```
+    - currently: polygon/polygon
+
+```bash
+    ndjson-spatial nearest-distance --ref <ref> --field-name
+```
+    - currently: point/point
+
+```bash
+    ndjson-area area --field-name <field-name>
+```
+
+## ndjson
+
+```bash
+    ndjson filter <expression>
+```
+
+```bash
+    ndjson join --ref <ref> --ref-field <ref-fields> --stream-field <stream-field>
+```
+    - ref-fields, stream-fields should be space delimited list of 'd.properties.FIELD_NAME'
+
+```bash
+    ndjson from-geojson
+```
+
+```bash
+    ndjson to-geojson
+```
+
+## Proposed
+
+## ndjson-spatial
+
+```bash
+    ndjson-spatial join-contains --ref <reference-file.geo.json> --field-name <field-name>
+```
+
+## ndjson
+
+```bash
+    ndjson pick-field <expression>
+
+    ndjson pick-field d.properties.distance
+```
+
+```bash
+    ndjson select-count <expression> --selector <selector> --field-name <field-name>
+
+    ndjson select-count d.properties.join --selector light=yes --field-name NUM_W_LIGHT
+```
+
+```bash
+    ndjson select-avg <expression> --selector <selector> --field-name <field-name>
+
+    ndjson select-count d.properties.join --selector light=yes --field-name AVG_W_LIGHT
+```
+
+```bash
+    ndjson sort <expression>
+```

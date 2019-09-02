@@ -8,8 +8,18 @@ edition = "2018"
 clap = "2"
 geo = "^0.12"
 geo-types = "^0.4"
-geojson = { git = "https://github.com/georust/geojson" }
-geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar", branch = "impl-for-each" }
-rstar = "^0.3"
+geojson = { version = "^0.16", features = ["geo-types"] }
+geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar", branch = "master" }
+nom = "^4.0"
+num-traits = "^0.2"
+rstar = "^0.5"
 serde_json = "^1.0"
-geo-booleanop = { git = "https://github.com/boydjohnson/rust-geo-booleanop" }
+geo-booleanop = "^0.2"
+
+[[bin]]
+name = "ndjson-spatial"
+path = "src/ndjson_spatial_main.rs"
+
+[[bin]]
+name = "ndjson"
+path = "src/ndjson_main.rs"
