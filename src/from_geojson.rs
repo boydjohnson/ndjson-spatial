@@ -25,10 +25,8 @@ pub fn split() -> Result<(), NdJsonSpatialError> {
             count += 1;
             start = true;
         }
-        if start {
-            if c != '\n' {
-                json_string.push(c);
-            }
+        if start && c != '\n' {
+            json_string.push(c);
         }
 
         if c == '}' {
