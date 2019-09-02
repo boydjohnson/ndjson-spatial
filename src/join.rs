@@ -1,7 +1,7 @@
 extern crate serde_json;
 
 use crate::error::NdJsonSpatialError;
-use crate::ndjson::NdJsonReader;
+use crate::ndjson::NdJsonGeojsonReader;
 use geojson::GeoJson;
 use std::collections::HashMap;
 use std::fs::File;
@@ -39,7 +39,7 @@ pub fn join(
         }
     }
 
-    for geo in NdJsonReader::default() {
+    for geo in NdJsonGeojsonReader::default() {
         match geo {
             Ok(geo) => {
                 if let GeoJson::Feature(mut feature) = geo {
@@ -69,7 +69,7 @@ pub fn join(
                 }
             }
             Err(e) => {
-                if let Err(err) = writeln!(::std::io::stderr(), "{:?}", e) {
+                if writeln!(::std::io::stderr(), "{:?}", e).is_err() {
                     panic!(
                         "During reporting error, {:?}, could not write to std err",
                         e
