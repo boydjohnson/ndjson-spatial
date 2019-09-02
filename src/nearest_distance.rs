@@ -5,19 +5,15 @@ extern crate rstar;
 extern crate serde_json;
 
 use crate::error::NdJsonSpatialError;
-use crate::ndjson::NdJsonReader;
+use crate::ndjson::NdJsonGeojsonReader;
 use geojson::GeoJson;
 use geojson_rstar::PointFeature;
 use rstar::{PointDistance, RTree};
-use serde_json::Value;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{Read, Write};
 
-pub fn nearest_distance(
-    mut reference_file: File,
-    property: String,
-) -> Result<(), NdJsonSpatialError> {
+pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialError> {
     let mut geojson_string = String::new();
 
     reference_file
@@ -34,18 +30,11 @@ pub fn nearest_distance(
             .collect::<Vec<PointFeature>>();
         let tree = RTree::bulk_load(point_features);
 
-        for geojson in NdJsonReader::default() {
-            if let GeoJson::Feature(feature) = geojson? {
-                let prop = if let Some(Some(Value::String(prop))) =
-                    feature.properties.map(|p| p.get(&property).cloned())
-                {
-                    Some(prop)
-                } else {
-                    None
-                };
-
-                if let geojson::Value::Point(point_vec) = feature
+        for geojson in NdJsonGeojsonReader::default() {
+            if let GeoJson::Feature(mut feature) = geojson? {
+                if let geojson::Value::Point(ref point_vec) = feature
                     .geometry
+                    .as_ref()
                     .ok_or_else(|| {
                         NdJsonSpatialError::Error(
                             "Missing Geometry on feature, cannot compute distance".into(),
@@ -53,20 +42,39 @@ pub fn nearest_distance(
                     })?
                     .value
                 {
-                    let nearest = tree.nearest_neighbor(&[*point_vec.get(0).unwrap(), *point_vec.get(1).unwrap()]).ok_or({
+                    let nearest = tree.nearest_neighbor(&[
+                        *point_vec.get(0)
+                            .ok_or_else(|| NdJsonSpatialError::Error("GeoJson point has less than 2 coordinates".into()))?, 
+                        *point_vec.get(1)
+                                .ok_or_else(|| NdJsonSpatialError::Error("GeoJson point has less than 2 coordinates".into()))?])
+                                .ok_or_else(||
                         NdJsonSpatialError::Error("Missing nearest neighbor for point. Did reference file contain geojson points".to_string())
-                    })?;
-                    let distance = nearest
-                        .distance_2(&[*point_vec.get(0).unwrap(), *point_vec.get(1).unwrap()]);
+                    )?;
+                    let distance = nearest.distance_2(&[
+                        *point_vec.get(0).ok_or_else(|| {
+                            NdJsonSpatialError::Error(
+                                "GeoJson point has less than 2 coordinates".into(),
+                            )
+                        })?,
+                        *point_vec.get(1).ok_or_else(|| {
+                            NdJsonSpatialError::Error(
+                                "GeoJson point has less than 2 coordinates".into(),
+                            )
+                        })?,
+                    ]);
 
-                    writeln!(
-                        ::std::io::stdout(),
-                        "{{ \"distance\": {}, \"{}\": \"{}\" }}",
-                        distance,
-                        property,
-                        prop.unwrap()
-                    )
-                    .expect("Unable to write to stdout");
+                    let number = serde_json::Number::from_f64(distance).ok_or_else(|| {
+                        NdJsonSpatialError::Error(
+                            "Could not convert f64 to Json Number".to_string(),
+                        )
+                    })?;
+
+                    feature.properties.as_mut().map(|p| {
+                        p.insert("distance".to_string(), serde_json::Value::Number(number))
+                    });
+
+                    writeln!(::std::io::stdout(), "{}", feature.to_string())
+                        .expect("Unable to write to stdout");
                 }
             }
         }

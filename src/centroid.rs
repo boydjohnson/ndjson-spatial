@@ -3,7 +3,7 @@ extern crate geo_types;
 extern crate geojson;
 
 use crate::error::NdJsonSpatialError;
-use crate::ndjson::NdJsonReader;
+use crate::ndjson::NdJsonGeojsonReader;
 use geo::algorithm::centroid::Centroid;
 use geo::Point;
 use geojson::{Feature, GeoJson, Geometry};
@@ -11,7 +11,7 @@ use std::convert::TryInto;
 use std::io::Write;
 
 pub fn compute_centroid() {
-    for geojson in NdJsonReader::default() {
+    for geojson in NdJsonGeojsonReader::default() {
         match geojson {
             Ok(geojson) => {
                 let geo_json;
