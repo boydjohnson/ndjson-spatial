@@ -1,5 +1,7 @@
 This repo contains some Rust cli tools for working with new-line delimited geojson
 
+These tools are currently pre-release. There will be releases with builds for linux and macos.
+
 ## Current
 
 ## ndjson-spatial
@@ -26,6 +28,14 @@ This repo contains some Rust cli tools for working with new-line delimited geojs
 
 ```bash
     ndjson filter <expression>
+
+    ndjson filter "d.properties.Area >= 30000.0"
+```
+
+```bash
+    ndjson pick-field <expression>
+
+    ndjson pick-field "d.properties.distance "
 ```
 
 ```bash
@@ -52,12 +62,6 @@ This repo contains some Rust cli tools for working with new-line delimited geojs
 ## ndjson
 
 ```bash
-    ndjson pick-field <expression>
-
-    ndjson pick-field d.properties.distance
-```
-
-```bash
     ndjson select-count <expression> --selector <selector> --field-name <field-name>
 
     ndjson select-count d.properties.join --selector light=yes --field-name NUM_W_LIGHT
@@ -66,9 +70,5 @@ This repo contains some Rust cli tools for working with new-line delimited geojs
 ```bash
     ndjson select-avg <expression> --selector <selector> --field-name <field-name>
 
-    ndjson select-count d.properties.join --selector light=yes --field-name AVG_W_LIGHT
-```
-
-```bash
-    ndjson sort <expression>
+    ndjson select-avg d.properties.join --selector light=yes --field-name AVG_W_LIGHT
 ```
