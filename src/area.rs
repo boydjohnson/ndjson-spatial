@@ -73,8 +73,7 @@ where
                     calculate_bounding_box_if_not_exists(&mut feat);
                 }
 
-                writeln!(&mut self.std_out, "{}", feat.to_string())
-                    .expect("Unable to write to stdout");
+                writeln!(self.std_out, "{}", feat.to_string()).expect("Unable to write to stdout");
             }
         }
         Ok(())
@@ -91,17 +90,25 @@ mod tests {
         let out = vec![];
 
         let mut area_calc = NdjsonSpatialArea::<&[u8], Vec<u8>>::new(
-            "{ \"Type\": \"Polygon\", \"coordinates\": [[189776.5420303712, 4816290.5053447075] ,[761661.7830505947, 4816290.5053447075],[ 761661.7830505947, 5472415.100443922], [189776.5420303712, 5472415.100443922]]}".as_bytes(),
+            "{ \"type\": \"Feature\", \"properties\": { \"STATEFP\": 27 }, \"geometry\": { \"type\": \"Polygon\", \"coordinates\": [[[189776.5420303712, 4816290.5053447075] ,[761661.7830505947, 4816290.5053447075],[ 761661.7830505947, 5472415.100443922], [189776.5420303712, 5472415.100443922]]] }}".as_bytes(),
             out,
         );
 
         area_calc
-            .area("Area".to_string(), false)
+            .area("Area".to_string(), true)
             .expect("Able to calculate area");
         let data =
             std::str::from_utf8(&area_calc.std_out).expect("Some of the bytes were not utf-8");
         let output = data
             .parse::<GeoJson>()
             .expect("The output was not valid geojson");
+        if let GeoJson::Feature(feat) = output {
+            assert!(feat.properties.is_some());
+
+            let properties = feat.properties.expect("Properties is some");
+            assert!(properties.contains_key("Area"));
+        } else {
+            panic!("Geojson was not a feature");
+        }
     }
 }
