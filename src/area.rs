@@ -76,12 +76,12 @@ where
 
                 let a = serde_json::Number::from_f64(area)
                     .ok_or_else(|| {
-                        NdJsonSpatialError::Error(format!("Error converting f64 to Json number"))
+                        NdJsonSpatialError::Error("Error converting f64 to Json number".to_string())
                     })
-                    .map(|v| serde_json::Value::Number(v))?;
+                    .map(serde_json::Value::Number)?;
 
                 feat.properties
-                    .get_or_insert_with(|| Map::new())
+                    .get_or_insert_with(Map::new)
                     .insert(field_name.clone(), a);
 
                 if bbox {

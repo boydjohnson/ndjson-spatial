@@ -58,35 +58,31 @@ where
                 if let Ok(value) =
                     select_from_json_object(Value::Object(o.clone()), &exp_identifiers)
                 {
-                    match value {
-                        Value::Array(a) => {
-                            for item in &a {
-                                if let Ok(val) = select_from_json_object(item.clone(), &identifiers)
-                                {
-                                    match val {
-                                        Value::Number(n) => {
-                                            if compare.compare(&n.to_string()) {
-                                                count += 1;
-                                            }
+                    if let Value::Array(a) = value {
+                        for item in &a {
+                            if let Ok(val) = select_from_json_object(item.clone(), &identifiers) {
+                                match val {
+                                    Value::Number(n) => {
+                                        if compare.compare(&n.to_string()) {
+                                            count += 1;
                                         }
-                                        Value::String(s) => {
-                                            if compare.compare(&s) {
-                                                count += 1;
-                                            }
-                                        }
-                                        _ => (),
                                     }
+                                    Value::String(s) => {
+                                        if compare.compare(&s) {
+                                            count += 1;
+                                        }
+                                    }
+                                    _ => (),
                                 }
                             }
                         }
-                        _ => (),
                     }
                 }
             }
 
-            feature.properties.as_mut().map(|p| {
+            if let Some(p) = feature.properties.as_mut() {
                 p.insert(field_name.to_string(), Value::Number(count.into()));
-            });
+            };
         }
 
         writeln!(::std::io::stdout(), "{}", v).expect("Could not write to stdout");
