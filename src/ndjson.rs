@@ -3,9 +3,9 @@ use geojson::GeoJson;
 use serde_json::Value;
 use std::io::{stderr, stdin, BufRead, BufReader, Stdin, Write};
 
-/// A struct for reading ndjson geojson from a BufRead source,
-/// most usually BufReader<Stdin> which is provided by NdjsonGeojsonReader::default().
-/// Often used as the Iterator impl for which `Self::Item = geojson::GeoJson`.
+/// A struct for reading ndjson geojson from a `BufRead` source,
+/// most usually `BufReader<Stdin>` which is provided by `NdjsonGeojsonReader::default()`.
+/// Often used as the `Iterator` impl for which `Self::Item = geojson::GeoJson`.
 pub struct NdJsonGeojsonReader<IN> {
     std_in: IN,
 }
@@ -60,9 +60,9 @@ where
     }
 }
 
-/// Reads json items from a ndjson BufRead.
-/// The Default impl gives you the source of
-/// `BufReader<Stdin>`. Usually used as the Iterator impl,
+/// Reads json items from a ndjson `BufRead`.
+/// The `Default` impl gives you the source of
+/// `BufReader<Stdin>`. Usually used as the `Iterator` impl,
 /// for which `Self::Item = serde_json::Value`.
 pub struct NdjsonReader<IN> {
     std_in: IN,

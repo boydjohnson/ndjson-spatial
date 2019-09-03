@@ -39,7 +39,7 @@ pub fn read_geojson_file(
     }
 }
 
-pub fn intersection(mut reference_file: File) -> Result<(), NdJsonSpatialError> {
+pub fn intersection(reference_file: File) -> Result<(), NdJsonSpatialError> {
     let polygon_features = read_geojson_file(reference_file)?;
     let tree = RTree::bulk_load(polygon_features);
 

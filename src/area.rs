@@ -51,7 +51,6 @@ where
                     _ => {
                         writeln!(
                             std::io::stderr(),
-                            "{}",
                             "Error: area called on geometry other than polygon or multipolygon"
                         )
                         .expect("Unable to write to stderr");

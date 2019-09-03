@@ -10,7 +10,6 @@ mod centroid;
 mod common;
 mod error;
 mod intersection;
-mod join_contains;
 mod ndjson;
 mod nearest_distance;
 
