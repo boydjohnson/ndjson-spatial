@@ -1,7 +1,3 @@
-extern crate geo;
-extern crate geo_types;
-extern crate geojson;
-
 use crate::error::NdJsonSpatialError;
 use crate::ndjson::NdJsonGeojsonReader;
 use geo::algorithm::centroid::Centroid;

@@ -1,5 +1,3 @@
-extern crate serde_json;
-
 use crate::error::NdJsonSpatialError;
 use crate::ndjson::NdJsonGeojsonReader;
 use geojson::GeoJson;

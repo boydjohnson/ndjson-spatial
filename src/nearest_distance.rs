@@ -1,9 +1,3 @@
-extern crate geo;
-extern crate geojson;
-extern crate geojson_rstar;
-extern crate rstar;
-extern crate serde_json;
-
 use crate::error::NdJsonSpatialError;
 use crate::ndjson::NdJsonGeojsonReader;
 use geojson::GeoJson;

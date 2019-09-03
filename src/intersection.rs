@@ -1,7 +1,3 @@
-extern crate geo_booleanop;
-extern crate geojson_rstar;
-extern crate rstar;
-
 use crate::error::NdJsonSpatialError;
 use crate::ndjson::NdJsonGeojsonReader;
 use geo_booleanop::boolean::BooleanOp;
