@@ -1,67 +1,107 @@
-extern crate geo;
-extern crate geojson;
-extern crate serde_json;
-
+use crate::common::calculate_bounding_box_if_not_exists;
 use crate::error::NdJsonSpatialError;
 use crate::ndjson::NdJsonGeojsonReader;
 use geo::algorithm::area::Area;
+use geo::algorithm::orient::{Direction, Orient};
+use geojson::Value;
 use geojson_rstar::conversion::{create_geo_multi_polygon, create_geo_polygon};
-use geojson_rstar::{multipolygon_feature::MultiPolygonFeature, PolygonFeature};
-use std::convert::TryInto;
-use std::io::{BufRead, BufReader};
-use std::io::{Stdin, Write};
+use serde_json::Map;
+use std::io::{BufRead, BufReader, BufWriter};
+use std::io::{Stdin, Stdout, Write};
+use std::process::exit;
 
-pub struct NdjsonSpatialArea<IN> {
+pub struct NdjsonSpatialArea<IN, OUT> {
     std_in: IN,
+    std_out: OUT,
 }
 
-impl Default for NdjsonSpatialArea<BufReader<Stdin>> {
+impl Default for NdjsonSpatialArea<BufReader<Stdin>, BufWriter<Stdout>> {
     fn default() -> Self {
-        NdjsonSpatialArea {
-            std_in: BufReader::new(std::io::stdin()),
-        }
+        NdjsonSpatialArea::new(
+            BufReader::new(std::io::stdin()),
+            BufWriter::new(std::io::stdout()),
+        )
     }
 }
 
-impl<IN> NdjsonSpatialArea<IN> {
-    fn new(std_in: IN) -> Self {
-        NdjsonSpatialArea { std_in }
+impl<IN, OUT> NdjsonSpatialArea<IN, OUT> {
+    fn new(std_in: IN, std_out: OUT) -> Self {
+        NdjsonSpatialArea { std_in, std_out }
     }
 }
 
-impl<IN> NdjsonSpatialArea<IN>
+impl<IN, OUT> NdjsonSpatialArea<IN, OUT>
 where
     IN: BufRead,
+    OUT: Write,
 {
-    pub fn area(self, field_name: String) -> Result<(), NdJsonSpatialError> {
-        for geo in NdJsonGeojsonReader::new(self.std_in) {
-            if let Ok(geojson::GeoJson::Feature(feat)) = geo {
-                let area = if let Ok(p) = feat.clone().try_into() {
-                    let mut poly: PolygonFeature = p;
-
-                    create_geo_polygon(poly.polygon()).area()
-                } else if let Ok(p) = feat.clone().try_into() {
-                    let poly: MultiPolygonFeature = p;
-                    create_geo_multi_polygon(poly.polygons()).area()
+    pub fn area(&mut self, field_name: String, bbox: bool) -> Result<(), NdJsonSpatialError> {
+        for geo in NdJsonGeojsonReader::new(&mut self.std_in) {
+            if let Ok(geojson::GeoJson::Feature(mut feat)) = geo {
+                let area = match feat.geometry.as_ref().map(|g| &g.value) {
+                    Some(Value::MultiPolygon(ref multi_polygon)) => {
+                        let geo_multi_polygon = create_geo_multi_polygon(multi_polygon);
+                        geo_multi_polygon.orient(Direction::Default).area()
+                    }
+                    Some(Value::Polygon(ref polygon)) => {
+                        let geo_polygon = create_geo_polygon(polygon);
+                        geo_polygon.orient(Direction::Default).area()
+                    }
+                    None => 0.0,
+                    _ => {
+                        writeln!(
+                            std::io::stderr(),
+                            "{}",
+                            "Error: area called on geometry other than polygon or multipolygon"
+                        )
+                        .expect("Unable to write to stderr");
+                        exit(1);
+                    }
                 };
 
-                feat.properties.as_mut().map(|p| {
-                    p.insert(
-                        field_name.clone(),
-                        serde_json::Value::Number(serde_json::Number::from_f64(area).map_err(
-                            |e| {
-                                NdJsonSpatialError::Error(format!(
-                                    "Error converting f64 to Json Number: {}",
-                                    e
-                                ))
-                            },
-                        )?),
-                    )
-                });
-                writeln!(::std::io::stdout(), "{}", feat.to_string())
+                let a = serde_json::Number::from_f64(area)
+                    .ok_or_else(|| {
+                        NdJsonSpatialError::Error(format!("Error converting f64 to Json number"))
+                    })
+                    .map(|v| serde_json::Value::Number(v))?;
+
+                feat.properties
+                    .get_or_insert_with(|| Map::new())
+                    .insert(field_name.clone(), a);
+
+                if bbox {
+                    calculate_bounding_box_if_not_exists(&mut feat);
+                }
+
+                writeln!(&mut self.std_out, "{}", feat.to_string())
                     .expect("Unable to write to stdout");
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use geojson::GeoJson;
+
+    #[test]
+    fn test_area_polygon_success() {
+        let out = vec![];
+
+        let mut area_calc = NdjsonSpatialArea::<&[u8], Vec<u8>>::new(
+            "{ \"Type\": \"Polygon\", \"coordinates\": [[189776.5420303712, 4816290.5053447075] ,[761661.7830505947, 4816290.5053447075],[ 761661.7830505947, 5472415.100443922], [189776.5420303712, 5472415.100443922]]}".as_bytes(),
+            out,
+        );
+
+        area_calc
+            .area("Area".to_string(), false)
+            .expect("Able to calculate area");
+        let data =
+            std::str::from_utf8(&area_calc.std_out).expect("Some of the bytes were not utf-8");
+        let output = data
+            .parse::<GeoJson>()
+            .expect("The output was not valid geojson");
     }
 }

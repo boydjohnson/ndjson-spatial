@@ -7,6 +7,7 @@ use std::process::exit;
 
 mod area;
 mod centroid;
+mod common;
 mod error;
 mod intersection;
 mod join_contains;
@@ -71,8 +72,10 @@ fn main() {
             .expect("field-name is required")
             .into();
 
-        if let Err(e) = area::NdjsonSpatialArea::default().area(field_name) {
-            writeln!(std::io::stderr(), "{:?}", e);
+        let bbox = args.is_present("bbox");
+
+        if let Err(e) = area::NdjsonSpatialArea::default().area(field_name, bbox) {
+            writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
     }
 }
@@ -143,6 +146,14 @@ fn parse_args<'a>() -> ArgMatches<'a> {
                         .takes_value(true)
                         .number_of_values(1)
                         .help("what to name the area field")
+                )
+                .arg(
+                    Arg::with_name("bbox")
+                        .short("b")
+                        .long("bbox")
+                        .required(false)
+                        .takes_value(false)
+                        .help("Compute the bounding box if it does not exist")
                 )
         )
         .get_matches()
