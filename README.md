@@ -21,7 +21,13 @@ These tools are currently pre-release. There will be releases with builds for li
     - currently: point/point
 
 ```bash
-    ndjson-area area --field-name <field-name>
+    ndjson-spatial area --field-name <field-name>
+```
+
+```bash
+    ndjson-spatial from-geojson
+
+    ndjson-spatial to-geojson
 ```
 
 ## ndjson
@@ -42,14 +48,6 @@ These tools are currently pre-release. There will be releases with builds for li
     ndjson join --ref <ref> --ref-field <ref-fields> --stream-field <stream-field>
 ```
     - ref-fields, stream-fields should be space delimited list of 'd.properties.FIELD_NAME'
-
-```bash
-    ndjson from-geojson
-```
-
-```bash
-    ndjson to-geojson
-```
 
 ## Proposed
 

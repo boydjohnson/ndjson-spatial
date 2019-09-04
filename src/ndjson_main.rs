@@ -21,22 +21,16 @@ use std::process::exit;
 
 mod error;
 mod filter;
-mod from_geojson;
 mod join;
 mod json_parser;
 mod ndjson;
 mod pick_field;
 mod select_count;
-mod to_geojson;
 
 fn main() {
     let args = parse_args();
 
-    if let Some("to-geojson") = args.subcommand_name() {
-        if let Err(e) = to_geojson::to_geojson() {
-            writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
-        }
-    } else if let Some("filter") = args.subcommand_name() {
+    if let Some("filter") = args.subcommand_name() {
         let args = args
             .subcommand_matches("filter")
             .expect("subcommand was correctly tested for");
@@ -100,25 +94,12 @@ fn main() {
         if let Err(err) = join::join(reference_file, ref_fields, stream_fields) {
             writeln!(::std::io::stderr(), "{:?}", err).expect("Error writing to stderr");
         }
-    } else if let Some("from-geojson") = args.subcommand_name() {
-        if let Err(err) = from_geojson::split() {
-            writeln!(::std::io::stderr(), "Error in split: {:?}", err)
-                .expect("Unable to write to stderr");
-        }
     }
 }
 
 fn parse_args<'a>() -> ArgMatches<'a> {
     App::new("ndjson")
         .about("Tool for working with ndjson geojson features")
-        .subcommand(
-            SubCommand::with_name("to-geojson")
-                .about("combines ndjson features into a geojson feature collection"),
-        )
-        .subcommand(
-            SubCommand::with_name("from-geojson")
-                .about("splits geojson feature collection into ndjson stream"),
-        )
         .subcommand(
             SubCommand::with_name("pick-field")
                 .about("picks a field from all of the ndjson objects")

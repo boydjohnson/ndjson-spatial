@@ -23,9 +23,11 @@ mod area;
 mod centroid;
 mod common;
 mod error;
+mod from_geojson;
 mod intersection;
 mod ndjson;
 mod nearest_distance;
+mod to_geojson;
 
 fn main() {
     let args = parse_args();
@@ -90,6 +92,14 @@ fn main() {
         if let Err(e) = area::NdjsonSpatialArea::default().area(field_name, bbox) {
             writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
+    } else if let Some("to-geojson") = args.subcommand_name() {
+        if let Err(e) = to_geojson::to_geojson() {
+            writeln!(std::io::stderr(), "{:?}", e).expect("Could not write to stderr");
+        }
+    } else if let Some("from-geojson") = args.subcommand_name() {
+        if let Err(e) = from_geojson::split() {
+            writeln!(std::io::stderr(), "{:?}", e).expect("Could not write to stderr");
+        }
     }
 }
 
@@ -134,6 +144,14 @@ fn parse_args<'a>() -> ArgMatches<'a> {
         .subcommand(
             SubCommand::with_name("centroid")
                 .about("compute the centroid of multipolygon or polygon ndjson stream"),
+        )
+        .subcommand(
+            SubCommand::with_name("from-geojson")
+                .about("Convert geojson to ndjson")
+        )
+        .subcommand(
+            SubCommand::with_name("to-geojson")
+                .about("Convert ndjson to geojson")
         )
         .subcommand(
             SubCommand::with_name("intersection")
