@@ -18,8 +18,8 @@ use nom::digit;
 use nom::{
     complete, do_parse, many1, map_res, named, opt, rest_s, tag, take_till1, whitespace::sp,
 };
-use num_traits::Num;
 use std::num::{ParseFloatError, ParseIntError};
+use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ArraySelection {
@@ -43,38 +43,23 @@ pub enum Comparator {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Compare<T>
-where
-    T: Num,
-{
+pub struct Compare<T> {
     comparator: Comparator,
     value: T,
 }
 
 impl<T> Compare<T>
 where
-    T: Num + ::std::cmp::PartialOrd,
+    T: FromStr + ::std::cmp::PartialOrd,
 {
     pub fn compare(&self, other: &str) -> bool {
         match self.comparator {
-            Comparator::LT => T::from_str_radix(other, 10)
-                .map(|o| o < self.value)
-                .unwrap_or(false),
-            Comparator::LE => T::from_str_radix(other, 10)
-                .map(|o| o <= self.value)
-                .unwrap_or(false),
-            Comparator::GT => T::from_str_radix(other, 10)
-                .map(|o| o > self.value)
-                .unwrap_or(false),
-            Comparator::GE => T::from_str_radix(other, 10)
-                .map(|o| o >= self.value)
-                .unwrap_or(false),
-            Comparator::EQ => T::from_str_radix(other, 10)
-                .map(|o| o == self.value)
-                .unwrap_or(false),
-            Comparator::NE => T::from_str_radix(other, 10)
-                .map(|o| o != self.value)
-                .unwrap_or(false),
+            Comparator::LT => T::from_str(other).map(|o| o < self.value).unwrap_or(false),
+            Comparator::LE => T::from_str(other).map(|o| o <= self.value).unwrap_or(false),
+            Comparator::GT => T::from_str(other).map(|o| o > self.value).unwrap_or(false),
+            Comparator::GE => T::from_str(other).map(|o| o >= self.value).unwrap_or(false),
+            Comparator::EQ => T::from_str(other).map(|o| o == self.value).unwrap_or(false),
+            Comparator::NE => T::from_str(other).map(|o| o != self.value).unwrap_or(false),
         }
     }
 }
@@ -91,6 +76,10 @@ fn parse_u64(s: &str) -> Result<u64, ParseIntError> {
 
 fn parse_f64(s: &str) -> Result<f64, ParseFloatError> {
     s.parse::<f64>()
+}
+
+fn parse_string(s: &str) -> Result<String, std::convert::Infallible> {
+    s.parse()
 }
 
 named!(
@@ -209,6 +198,11 @@ named!(
 );
 
 named!(
+    parse_value_string<&str, String>,
+    map_res!(rest_s, parse_string)
+);
+
+named!(
     parse_compare_u64<&str, Compare<u64>>,
     do_parse!(
         comparator: parse_comparator >>
@@ -229,6 +223,16 @@ named!(
 );
 
 named!(
+    parse_compare_string<&str, Compare<String>>,
+    do_parse!(
+        comparator: parse_comparator >>
+        opt!(sp) >>
+        value: map_res!(rest_s, parse_string) >>
+        (Compare { comparator, value })
+    )
+);
+
+named!(
     pub parse_selector_u64<&str, (Compare<u64>, Vec<Identifier>)>,
     do_parse!(
         identifiers: parse_json_selector >>
@@ -244,6 +248,16 @@ named!(
         identifiers: parse_json_selector >>
         opt!(sp) >>
         compare: parse_compare_f64 >>
+        (compare, identifiers)
+    )
+);
+
+named!(
+    pub parse_selector_string<&str, (Compare<String>, Vec<Identifier>)>,
+    do_parse!(
+        identifiers: parse_json_selector >>
+        opt!(sp) >>
+        compare: parse_compare_string >>
         (compare, identifiers)
     )
 );

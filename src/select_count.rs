@@ -21,9 +21,9 @@ use crate::json_parser::{
 };
 use crate::ndjson::NdJsonGeojsonReader;
 use geojson::GeoJson;
-use num_traits::Num;
 use serde_json::Value;
 use std::io::Write;
+use std::str::FromStr;
 
 pub fn select_count(
     expression: &str,
@@ -47,7 +47,7 @@ fn count_and_then_write_to_stdout<T>(
     field_name: &str,
 ) -> Result<(), NdJsonSpatialError>
 where
-    T: Num + PartialOrd,
+    T: FromStr + PartialOrd,
 {
     for value in NdJsonGeojsonReader::default() {
         let v = value?;
