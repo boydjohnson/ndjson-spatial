@@ -15,16 +15,20 @@
  */
 
 use crate::error::NdJsonSpatialError;
-use crate::json_parser::{parse_selector_f64, parse_selector_u64, Compare, Identifier};
+use crate::json_parser::{
+    parse_selector_f64, parse_selector_string, parse_selector_u64, Compare, Identifier,
+};
 use crate::ndjson::NdjsonReader;
-use num_traits::Num;
 use serde_json::Value;
 use std::io::Write;
+use std::str::FromStr;
 
 pub fn ndjson_filter(expression: String) -> Result<(), NdJsonSpatialError> {
     if let Ok((_, (compare, identifiers))) = parse_selector_u64(&expression) {
         write_to_stdout_if_filter_is_true(compare, identifiers)?;
     } else if let Ok((_, (compare, identifiers))) = parse_selector_f64(&expression) {
+        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+    } else if let Ok((_, (compare, identifiers))) = parse_selector_string(&expression) {
         write_to_stdout_if_filter_is_true(compare, identifiers)?;
     }
     Ok(())
@@ -35,7 +39,7 @@ fn write_to_stdout_if_filter_is_true<T>(
     identifiers: Vec<Identifier>,
 ) -> Result<(), NdJsonSpatialError>
 where
-    T: Num + PartialOrd,
+    T: FromStr + PartialOrd,
 {
     for value in NdjsonReader::default() {
         let v = value?;
