@@ -8,6 +8,6 @@ edition = "2018"
 geo = "0.12"
 geojson = "0.16"
 geo-types = "0.4"
-geojson-rstar = { path = "../../geojson-rstar" } 
+geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar" } 
 nom = "4.2"
 serde_json = "1.0"
