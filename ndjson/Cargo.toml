@@ -1,0 +1,15 @@
+[package]
+name = "ndjson"
+version = "0.1.0"
+authors = ["Boyd Johnson <johnson.boyd@gmail.com>"]
+edition = "2018"
+
+[[bin]]
+path = "src/ndjson_main.rs"
+name = "ndjson"
+
+[dependencies]
+clap = "2.33"
+geojson = "0.16"
+ndjson-common = { path = "../ndjson-common" }
+serde_json = "1.0"

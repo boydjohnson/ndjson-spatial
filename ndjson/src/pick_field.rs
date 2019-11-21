@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Gobsmacked Labs, LLC
+ * Copyright 2019 Boyd Johnson
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-use crate::error::NdJsonSpatialError;
 use crate::filter::select_from_json_object;
-use crate::json_parser::parse_json_selector;
-use crate::ndjson::NdjsonReader;
+use ndjson_common::error::NdJsonSpatialError;
+use ndjson_common::json_parser::parse_json_selector;
+use ndjson_common::ndjson::NdjsonReader;
 use serde_json::ser::to_string;
 use serde_json::Value;
 use std::io::Write;

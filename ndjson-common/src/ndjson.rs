@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Gobsmacked Labs, LLC
+ * Copyright 2019 Boyd Johnson
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
