@@ -1,25 +1,6 @@
-[package]
-name = "ndjson-spatial"
-version = "0.1.0"
-authors = ["Boyd Johnson <johnson.boyd@gmail.com>"]
-edition = "2018"
-
-[dependencies]
-clap = "2"
-geo = "^0.12"
-geo-types = "^0.4"
-geojson = { version = "^0.16", features = ["geo-types"] }
-geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar", branch = "master" }
-nom = "^4.0"
-num-traits = "^0.2"
-rstar = "^0.5"
-serde_json = "^1.0"
-geo-booleanop = "^0.2"
-
-[[bin]]
-name = "ndjson-spatial"
-path = "src/ndjson_spatial_main.rs"
-
-[[bin]]
-name = "ndjson"
-path = "src/ndjson_main.rs"
+[workspace]
+members = [
+    "ndjson",
+    "ndjson-common",
+    "ndjson-spatial"
+]

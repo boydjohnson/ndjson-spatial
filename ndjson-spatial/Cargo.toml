@@ -1,0 +1,20 @@
+[package]
+name = "ndjson-spatial"
+version = "0.1.0"
+authors = ["Boyd Johnson <johnson.boyd@gmail.com>"]
+edition = "2018"
+
+[[bin]]
+path = "src/ndjson_spatial_main.rs"
+name = "ndjson-spatial"
+
+[dependencies]
+clap = "^2.33"
+geo = "^0.12"
+geo-booleanop = "^0.2"
+geo-types = "^0.4"
+geojson = { version = "^0.16", features = ["geo-types"] }
+geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar" }
+ndjson-common = { path = "../ndjson-common" }
+rstar = "^0.6"
+serde_json = "^1.0"
