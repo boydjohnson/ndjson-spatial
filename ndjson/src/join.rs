@@ -41,7 +41,7 @@ pub fn join(
                     .filter_map(|f| prop.get(f).cloned())
                     .filter_map(|v| {
                         if let serde_json::Value::String(s) = v {
-                            Some(s.to_owned())
+                            Some(s)
                         } else {
                             None
                         }
