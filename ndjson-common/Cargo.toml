@@ -6,8 +6,8 @@ edition = "2018"
 
 [dependencies]
 geo = "0.12"
-geojson = "0.16"
+geojson = { version = "0.16", features = ["geo-types"] }
 geo-types = "0.4"
-geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar" } 
+geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar", rev = "80f0f0ba" }
 nom = "4.2"
 serde_json = "1.0"
