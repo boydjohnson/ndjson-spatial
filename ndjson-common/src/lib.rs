@@ -16,7 +16,6 @@
 
 pub mod common;
 pub mod error;
-pub mod from_geojson;
+pub mod from;
 pub mod json_parser;
 pub mod ndjson;
-pub mod to_geojson;

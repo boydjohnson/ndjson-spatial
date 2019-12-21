@@ -15,15 +15,16 @@
 */
 
 use clap::{App, Arg, ArgMatches, SubCommand};
-use ndjson_common::{from_geojson, to_geojson};
 use std::fs::File;
 use std::io::Write;
 use std::process::exit;
 
 mod area;
 mod centroid;
+mod from_geojson;
 mod intersection;
 mod nearest_distance;
+mod to_geojson;
 
 fn main() {
     let args = parse_args();

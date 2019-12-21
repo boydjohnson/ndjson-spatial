@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-use crate::error::NdJsonSpatialError;
-use crate::ndjson::NdJsonGeojsonReader;
 use geojson::{FeatureCollection, GeoJson};
+use ndjson_common::error::NdJsonSpatialError;
+use ndjson_common::ndjson::NdJsonGeojsonReader;
 use std::io::Write;
 
 pub fn to_geojson() -> Result<(), NdJsonSpatialError> {

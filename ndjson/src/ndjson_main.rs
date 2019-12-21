@@ -20,9 +20,11 @@ use std::io::Write;
 use std::process::exit;
 
 mod filter;
+mod from_json;
 mod join;
 mod pick_field;
 mod select_count;
+mod to_json;
 
 fn main() {
     let args = parse_args();
@@ -90,6 +92,15 @@ fn main() {
 
         if let Err(err) = join::join(reference_file, ref_fields, stream_fields) {
             writeln!(::std::io::stderr(), "{:?}", err).expect("Error writing to stderr");
+        }
+    } else if let Some("from-json") = args.subcommand_name() {
+        let args = args
+            .subcommand_matches("from-json")
+            .expect("subcommand was correctly tested for");
+        let expression = args.value_of("expression").expect("expression is required");
+
+        if let Err(e) = from_json::from_json(expression) {
+            writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
     }
 }
@@ -166,6 +177,15 @@ fn parse_args<'a>() -> ArgMatches<'a> {
                         .required(true)
                         .help("The json selector filter expression"),
                 ),
+        )
+        .subcommand(
+            SubCommand::with_name("from-json")
+                .about("Converts json to ndjson")
+                .arg(
+                    Arg::with_name("expression")
+                        .required(true)
+                        .help("selector expression that contains the collection")
+                )
         )
         .get_matches()
 }
