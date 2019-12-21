@@ -15,7 +15,7 @@
  */
 
 use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::json_parser::{
+use ndjson_common::json_selector_parser::{
     parse_selector_f64, parse_selector_string, parse_selector_u64, Compare, Identifier,
 };
 use ndjson_common::ndjson::NdjsonReader;

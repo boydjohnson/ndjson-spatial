@@ -17,7 +17,7 @@
 use crate::filter::select_from_json_object;
 use geojson::GeoJson;
 use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::json_parser::{
+use ndjson_common::json_selector_parser::{
     parse_json_selector, parse_selector_f64, parse_selector_u64, Compare, Identifier,
 };
 use ndjson_common::ndjson::NdJsonGeojsonReader;

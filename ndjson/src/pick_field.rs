@@ -16,7 +16,7 @@
 
 use crate::filter::select_from_json_object;
 use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::json_parser::parse_json_selector;
+use ndjson_common::json_selector_parser::parse_json_selector;
 use ndjson_common::ndjson::NdjsonReader;
 use serde_json::ser::to_string;
 use serde_json::Value;

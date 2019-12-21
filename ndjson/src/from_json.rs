@@ -16,7 +16,7 @@
 
 use ndjson_common::error::NdJsonSpatialError;
 use ndjson_common::from::generic_split_identifiers;
-use ndjson_common::json_parser::parse_json_selector;
+use ndjson_common::json_selector_parser::parse_json_selector;
 
 pub fn from_json(expression: &str) -> Result<(), NdJsonSpatialError> {
     let (_, identifiers) = parse_json_selector(expression)
