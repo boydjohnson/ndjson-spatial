@@ -30,10 +30,10 @@ pub fn select_count(
     selector: &str,
     field_name: &str,
 ) -> Result<(), NdJsonSpatialError> {
-    if let Ok((_, exp_identifiers)) = parse_json_selector(expression) {
-        if let Ok((_, (compare, identifiers))) = parse_selector_u64(selector) {
+    if let Ok((_, exp_identifiers)) = parse_json_selector(expression.into()) {
+        if let Ok((_, (compare, identifiers))) = parse_selector_u64(selector.into()) {
             count_and_then_write_to_stdout(exp_identifiers, compare, identifiers, field_name)?;
-        } else if let Ok((_, (compare, identifiers))) = parse_selector_f64(selector) {
+        } else if let Ok((_, (compare, identifiers))) = parse_selector_f64(selector.into()) {
             count_and_then_write_to_stdout(exp_identifiers, compare, identifiers, field_name)?;
         }
     }

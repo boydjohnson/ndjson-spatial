@@ -24,11 +24,13 @@ use std::io::Write;
 use std::str::FromStr;
 
 pub fn ndjson_filter(expression: String) -> Result<(), NdJsonSpatialError> {
-    if let Ok((_, (compare, identifiers))) = parse_selector_u64(&expression) {
+    if let Ok((_, (compare, identifiers))) = parse_selector_u64(expression.as_str().into()) {
         write_to_stdout_if_filter_is_true(compare, identifiers)?;
-    } else if let Ok((_, (compare, identifiers))) = parse_selector_f64(&expression) {
+    } else if let Ok((_, (compare, identifiers))) = parse_selector_f64(expression.as_str().into()) {
         write_to_stdout_if_filter_is_true(compare, identifiers)?;
-    } else if let Ok((_, (compare, identifiers))) = parse_selector_string(&expression) {
+    } else if let Ok((_, (compare, identifiers))) =
+        parse_selector_string(expression.as_str().into())
+    {
         write_to_stdout_if_filter_is_true(compare, identifiers)?;
     }
     Ok(())

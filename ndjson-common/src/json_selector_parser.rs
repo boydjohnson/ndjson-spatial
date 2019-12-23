@@ -16,8 +16,8 @@
 
 use nom::digit;
 use nom::{
-    complete, do_parse, many0, map_res, named, opt, rest_s, tag, take_till1, take_while,
-    whitespace::sp,
+    complete, do_parse, many0, map_res, named, opt, rest, tag, take_till1, take_while,
+    types::CompleteStr, whitespace::sp,
 };
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
@@ -71,20 +71,20 @@ pub enum Identifier {
     ArraySelection(ArraySelection),
 }
 
-fn parse_u64(s: &str) -> Result<u64, ParseIntError> {
+fn parse_u64(s: CompleteStr) -> Result<u64, ParseIntError> {
     s.parse::<u64>()
 }
 
-fn parse_f64(s: &str) -> Result<f64, ParseFloatError> {
+fn parse_f64(s: CompleteStr) -> Result<f64, ParseFloatError> {
     s.parse::<f64>()
 }
 
-fn parse_string(s: &str) -> Result<String, std::convert::Infallible> {
+fn parse_string(s: CompleteStr) -> Result<String, std::convert::Infallible> {
     s.parse()
 }
 
 named!(
-    parse_self_signifier<&str, Option<ArraySelection>>,
+    parse_self_signifier<CompleteStr, Option<ArraySelection>>,
     do_parse!(
         tag!("d") >> 
         index: opt!(complete!(parse_index)) >>
@@ -93,7 +93,7 @@ named!(
 );
 
 named!(
-    parse_index<&str, u64>,
+    parse_index<CompleteStr, u64>,
     do_parse!(
         tag!("[") >>
         index: map_res!(digit, parse_u64) >>
@@ -103,7 +103,7 @@ named!(
 );
 
 named!(
-    parse_dot_plus_identifier<&str, (Identifier, Option<ArraySelection>)>,
+    parse_dot_plus_identifier<CompleteStr, (Identifier, Option<ArraySelection>)>,
     do_parse!(
         tag!(".") >>
         identifier: take_while!(is_not_dot_or_array_bracket_or_comparator) >>
@@ -146,12 +146,12 @@ fn combine_identifiers(
 }
 
 named!(
-    parse_many_identifiers<&str, Vec<(Identifier, Option<ArraySelection>)>>,
+    parse_many_identifiers<CompleteStr, Vec<(Identifier, Option<ArraySelection>)>>,
     many0!(complete!(parse_dot_plus_identifier))
 );
 
 named!(
-    pub parse_json_selector<&str, Vec<Identifier>>,
+    pub parse_json_selector<CompleteStr, Vec<Identifier>>,
     do_parse!(
         first_array_selection: parse_self_signifier >>
         identifiers: parse_many_identifiers >>
@@ -163,8 +163,8 @@ fn is_comparator(c: char) -> bool {
     c == '<' || c == '=' || c == '!' || c == '>'
 }
 
-fn comparator(c: &str) -> Result<Comparator, ()> {
-    match c {
+fn comparator(c: CompleteStr) -> Result<Comparator, ()> {
+    match c.0 {
         "<" => Ok(Comparator::LT),
         "<=" => Ok(Comparator::LE),
         "==" => Ok(Comparator::EQ),
@@ -176,7 +176,7 @@ fn comparator(c: &str) -> Result<Comparator, ()> {
 }
 
 named!(
-    parse_comparator<&str, Comparator>,
+    parse_comparator<CompleteStr, Comparator>,
     map_res!(take_till1!(is_digit_or_space), comparator)
 );
 
@@ -189,52 +189,52 @@ fn is_digit_or_space(c: char) -> bool {
 }
 
 named!(
-    parse_value_f64<&str, f64>,
-    map_res!(rest_s, parse_f64)
+    parse_value_f64<CompleteStr, f64>,
+    map_res!(rest, parse_f64)
 );
 
 named!(
-    parse_value_u64<&str, u64>,
-    map_res!(rest_s, parse_u64)
+    parse_value_u64<CompleteStr, u64>,
+    map_res!(rest, parse_u64)
 );
 
 named!(
-    parse_value_string<&str, String>,
-    map_res!(rest_s, parse_string)
+    parse_value_string<CompleteStr, String>,
+    map_res!(rest, parse_string)
 );
 
 named!(
-    parse_compare_u64<&str, Compare<u64>>,
+    parse_compare_u64<CompleteStr, Compare<u64>>,
     do_parse!(
         comparator: parse_comparator >>
         opt!(sp) >>
-        value: map_res!(rest_s, parse_u64) >>
+        value: map_res!(rest, parse_u64) >>
         (Compare { comparator, value })
     )
 );
 
 named!(
-    parse_compare_f64<&str, Compare<f64>>,
+    parse_compare_f64<CompleteStr, Compare<f64>>,
     do_parse!(
         comparator: parse_comparator >>
         opt!(sp) >>
-        value: map_res!(rest_s, parse_f64) >>
+        value: map_res!(rest, parse_f64) >>
         (Compare { comparator, value })
     )
 );
 
 named!(
-    parse_compare_string<&str, Compare<String>>,
+    parse_compare_string<CompleteStr, Compare<String>>,
     do_parse!(
         comparator: parse_comparator >>
         opt!(sp) >>
-        value: map_res!(rest_s, parse_string) >>
+        value: map_res!(rest, parse_string) >>
         (Compare { comparator, value })
     )
 );
 
 named!(
-    pub parse_selector_u64<&str, (Compare<u64>, Vec<Identifier>)>,
+    pub parse_selector_u64<CompleteStr, (Compare<u64>, Vec<Identifier>)>,
     do_parse!(
         identifiers: parse_json_selector >>
         opt!(sp) >>
@@ -244,7 +244,7 @@ named!(
 );
 
 named!(
-    pub parse_selector_f64<&str, (Compare<f64>, Vec<Identifier>)>,
+    pub parse_selector_f64<CompleteStr, (Compare<f64>, Vec<Identifier>)>,
     do_parse!(
         identifiers: parse_json_selector >>
         opt!(sp) >>
@@ -254,7 +254,7 @@ named!(
 );
 
 named!(
-    pub parse_selector_string<&str, (Compare<String>, Vec<Identifier>)>,
+    pub parse_selector_string<CompleteStr, (Compare<String>, Vec<Identifier>)>,
     do_parse!(
         identifiers: parse_json_selector >>
         opt!(sp) >>
@@ -269,51 +269,51 @@ mod tests {
 
     #[test]
     fn test_parse_self_signifier_success() {
-        assert_eq!(parse_self_signifier("d"), Ok(("", None)));
+        assert_eq!(parse_self_signifier("d".into()), Ok(("".into(), None)));
         assert_eq!(
-            parse_self_signifier("d[0]"),
-            Ok(("", Some(ArraySelection { index: 0 })))
+            parse_self_signifier("d[0]".into()),
+            Ok(("".into(), Some(ArraySelection { index: 0 })))
         );
         assert_eq!(
-            parse_self_signifier("d[24]"),
-            Ok(("", Some(ArraySelection { index: 24 })))
+            parse_self_signifier("d[24]".into()),
+            Ok(("".into(), Some(ArraySelection { index: 24 })))
         );
 
         assert_eq!(
-            parse_self_signifier("d.properties.AREA"),
-            Ok((".properties.AREA", None))
+            parse_self_signifier("d.properties.AREA".into()),
+            Ok((".properties.AREA".into(), None))
         );
     }
 
     #[test]
     fn test_parse_self_signifier_failure() {
-        assert!(parse_self_signifier("b").is_err());
+        assert!(parse_self_signifier("b".into()).is_err());
 
-        assert!(parse_self_signifier("e[]").is_err());
+        assert!(parse_self_signifier("e[]".into()).is_err());
     }
 
     #[test]
     fn test_dot_plus_identifier_success() {
         assert_eq!(
-            parse_dot_plus_identifier(".properties.AREA"),
+            parse_dot_plus_identifier(".properties.AREA".into()),
             Ok((
-                ".AREA",
+                ".AREA".into(),
                 (Identifier::Identifier("properties".to_string()), None)
             ))
         );
 
         assert_eq!(
-            parse_dot_plus_identifier(".properties.contains[5]"),
+            parse_dot_plus_identifier(".properties.contains[5]".into()),
             Ok((
-                ".contains[5]",
+                ".contains[5]".into(),
                 (Identifier::Identifier("properties".to_string()), None)
             ))
         );
 
         assert_eq!(
-            parse_dot_plus_identifier(".contains[5]"),
+            parse_dot_plus_identifier(".contains[5]".into()),
             Ok((
-                "",
+                "".into(),
                 (
                     Identifier::Identifier("contains".to_string()),
                     Some(ArraySelection { index: 5 })
@@ -324,15 +324,15 @@ mod tests {
 
     #[test]
     fn test_dot_plus_identifier_failure() {
-        assert!(parse_dot_plus_identifier("simply.considered").is_err())
+        assert!(parse_dot_plus_identifier("simply.considered".into()).is_err())
     }
 
     #[test]
     fn test_many_identifiers() {
         assert_eq!(
-            parse_many_identifiers(".properties.AREA>"),
+            parse_many_identifiers(".properties.AREA>".into()),
             Ok((
-                ">",
+                ">".into(),
                 vec![
                     (Identifier::Identifier("properties".to_string()), None),
                     (Identifier::Identifier("AREA".to_string()), None)
@@ -344,9 +344,9 @@ mod tests {
     #[test]
     fn test_json_selector_success() {
         assert_eq!(
-            parse_json_selector("d.properties.AREA "),
+            parse_json_selector("d.properties.AREA".into()),
             Ok((
-                " ",
+                "".into(),
                 vec![
                     Identifier::Identifier("properties".to_string()),
                     Identifier::Identifier("AREA".to_string())
@@ -357,24 +357,30 @@ mod tests {
 
     #[test]
     fn test_parse_comparator_success() {
-        assert_eq!(parse_comparator(">=5.5"), Ok(("5.5", Comparator::GE)));
+        assert_eq!(
+            parse_comparator(">=5.5".into()),
+            Ok(("5.5".into(), Comparator::GE))
+        );
 
-        assert_eq!(parse_comparator("== 7.4"), Ok((" 7.4", Comparator::EQ)));
+        assert_eq!(
+            parse_comparator("== 7.4".into()),
+            Ok((" 7.4".into(), Comparator::EQ))
+        );
     }
 
     #[test]
     fn test_parse_value_success() {
-        assert_eq!(parse_value_f64("5.5"), Ok(("", 5.5)));
+        assert_eq!(parse_value_f64("5.5".into()), Ok(("".into(), 5.5)));
 
-        assert_eq!(parse_value_u64("6555"), Ok(("", 6555)));
+        assert_eq!(parse_value_u64("6555".into()), Ok(("".into(), 6555)));
     }
 
     #[test]
     fn test_parse_compare_success() {
         assert_eq!(
-            parse_compare_f64(">= 5.5"),
+            parse_compare_f64(">= 5.5".into()),
             Ok((
-                "",
+                "".into(),
                 Compare {
                     comparator: Comparator::GE,
                     value: 5.5
@@ -383,9 +389,9 @@ mod tests {
         );
 
         assert_eq!(
-            parse_compare_u64("== 5"),
+            parse_compare_u64("== 5".into()),
             Ok((
-                "",
+                "".into(),
                 Compare {
                     comparator: Comparator::EQ,
                     value: 5
@@ -394,9 +400,9 @@ mod tests {
         );
 
         assert_eq!(
-            parse_compare_f64("<= 7.4"),
+            parse_compare_f64("<= 7.4".into()),
             Ok((
-                "",
+                "".into(),
                 Compare {
                     comparator: Comparator::LE,
                     value: 7.4
@@ -405,9 +411,9 @@ mod tests {
         );
 
         assert_eq!(
-            parse_compare_u64("==568473"),
+            parse_compare_u64("==568473".into()),
             Ok((
-                "",
+                "".into(),
                 Compare {
                     comparator: Comparator::EQ,
                     value: 568473
@@ -419,9 +425,9 @@ mod tests {
     #[test]
     fn test_full_selector_success() {
         assert_eq!(
-            parse_selector_f64("d.properties.AREA >= 5.5"),
+            parse_selector_f64("d.properties.AREA >= 5.5".into()),
             Ok((
-                "",
+                "".into(),
                 (
                     Compare {
                         comparator: Comparator::GE,
@@ -436,9 +442,9 @@ mod tests {
         );
 
         assert_eq!(
-            parse_selector_u64("d[5].manager.pay >= 40000"),
+            parse_selector_u64("d[5].manager.pay >= 40000".into()),
             Ok((
-                "",
+                "".into(),
                 (
                     Compare {
                         comparator: Comparator::GE,
@@ -456,8 +462,8 @@ mod tests {
 
     #[test]
     fn test_parse_full_selector_failure() {
-        assert!(parse_selector_u64("d[5].manager_pay >= 60.456").is_err());
+        assert!(parse_selector_u64("d[5].manager_pay >= 60.456".into()).is_err());
 
-        assert!(parse_selector_f64("d[55]. manager. pay").is_err());
+        assert!(parse_selector_f64("d[55]. manager. pay".into()).is_err());
     }
 }

@@ -23,7 +23,7 @@ use serde_json::Value;
 use std::io::Write;
 
 pub fn pick_field(expression: &str) -> Result<(), NdJsonSpatialError> {
-    let (_, identifiers) = parse_json_selector(expression)
+    let (_, identifiers) = parse_json_selector(expression.into())
         .map_err(|e| NdJsonSpatialError::Error(format!("Unable to parse expression: {}", e)))?;
     for value in NdjsonReader::default() {
         let v = value?;
