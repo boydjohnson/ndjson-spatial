@@ -15,7 +15,7 @@
  */
 
 use crate::error::NdJsonSpatialError;
-use crate::json_parser::Identifier;
+use crate::json_selector_parser::Identifier;
 use std::io::{BufReader, Read, Write};
 
 pub fn generic_split<R: Read, W: Write>(
@@ -143,7 +143,7 @@ pub fn generic_split_identifiers<R: Read, W: Write>(
 #[cfg(test)]
 mod tests {
     use super::generic_split_identifiers;
-    use crate::json_parser::Identifier;
+    use crate::json_selector_parser::Identifier;
 
     #[test]
     fn test_generic_split_identifiers_test_identifiers() {
