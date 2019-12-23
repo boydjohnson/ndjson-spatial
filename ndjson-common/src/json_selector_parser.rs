@@ -16,7 +16,8 @@
 
 use nom::digit;
 use nom::{
-    complete, do_parse, many1, map_res, named, opt, rest_s, tag, take_till1, whitespace::sp,
+    complete, do_parse, many0, map_res, named, opt, rest_s, tag, take_till1, take_while,
+    whitespace::sp,
 };
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
@@ -105,14 +106,14 @@ named!(
     parse_dot_plus_identifier<&str, (Identifier, Option<ArraySelection>)>,
     do_parse!(
         tag!(".") >>
-        identifier: take_till1!(is_dot_or_array_bracket_or_comparator) >>
+        identifier: take_while!(is_not_dot_or_array_bracket_or_comparator) >>
         index: opt!(parse_index) >>
         (Identifier::Identifier(identifier.to_string()), index.map(|i| ArraySelection {index: i}))
     )
 );
 
-fn is_dot_or_array_bracket_or_comparator(c: char) -> bool {
-    is_dot(c) || is_array_bracket(c) || is_comparator(c) || c == ' '
+fn is_not_dot_or_array_bracket_or_comparator(c: char) -> bool {
+    !is_dot(c) && !is_array_bracket(c) && !is_comparator(c) && c != ' '
 }
 
 fn is_dot(c: char) -> bool {
@@ -146,14 +147,14 @@ fn combine_identifiers(
 
 named!(
     parse_many_identifiers<&str, Vec<(Identifier, Option<ArraySelection>)>>,
-    many1!(complete!(parse_dot_plus_identifier))
+    many0!(complete!(parse_dot_plus_identifier))
 );
 
 named!(
     pub parse_json_selector<&str, Vec<Identifier>>,
     do_parse!(
         first_array_selection: parse_self_signifier >>
-        identifiers: many1!(parse_dot_plus_identifier) >>
+        identifiers: parse_many_identifiers >>
         (combine_identifiers(first_array_selection, identifiers))
     )
 );
