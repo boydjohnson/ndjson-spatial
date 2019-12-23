@@ -5,6 +5,7 @@ authors = ["Boyd Johnson <johnson.boyd@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+encode_unicode = "^0.3"
 geo = "0.12"
 geojson = { version = "0.16", features = ["geo-types"] }
 geo-types = "0.4"
