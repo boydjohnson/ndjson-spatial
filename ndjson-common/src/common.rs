@@ -64,3 +64,16 @@ fn do_calc_bounding_box(bounding_rect: Option<Rect<f64>>) -> Option<Vec<f64>> {
         None
     }
 }
+
+pub fn to_geo_json(geo_geometry: &geo::Geometry<f64>) -> geojson::Value {
+    match geo_geometry {
+        geo::Geometry::Point(p) => geojson::Value::from(p),
+        geo::Geometry::LineString(l) => geojson::Value::from(l),
+        geo::Geometry::Polygon(p) => geojson::Value::from(p),
+        geo::Geometry::MultiPoint(p) => geojson::Value::from(p),
+        geo::Geometry::MultiPolygon(p) => geojson::Value::from(p),
+        geo::Geometry::MultiLineString(p) => geojson::Value::from(p),
+        geo::Geometry::Line(_) => panic!("Line<f64> used and not supported"),
+        geo::Geometry::GeometryCollection(g) => geojson::Value::from(g),
+    }
+}
