@@ -15,10 +15,11 @@
 */
 
 use crate::common::GeometryType;
-use geo_booleanop::boolean::BooleanOp;
+use gdal::vector::ToGdal;
+use geojson::Value;
 use geojson::{GeoJson, Geometry};
 use geojson_rstar::conversion::create_geo_polygon;
-use geojson_rstar::{Feature, PolygonFeature};
+use geojson_rstar::Feature;
 use ndjson_common::error::NdJsonSpatialError;
 use ndjson_common::ndjson::NdJsonGeojsonReader;
 use rstar::{RTree, RTreeObject};
@@ -115,11 +116,32 @@ pub fn intersection(reference_file: File, geometry_type: &str) -> Result<(), NdJ
         match geojson {
             Ok(geojson) => {
                 if let GeoJson::Feature(feature) = geojson {
-                    let mut polygon: PolygonFeature = feature
-                        .try_into()
-                        .map_err(|e| NdJsonSpatialError::Error(format!("Error {:?}", e)))?;
-                    let mut acc = vec![];
-                    let mut iter = tree.locate_in_envelope_intersecting(&polygon.envelope());
+                    let feature = match feature.geometry.map(|g| g.value) {
+                        Some(Value::Point(_)) => feature.try_into().map(Feature::Point)?,
+                        Some(Value::MultiPoint(_)) => {
+                            feature.try_into().map(Feature::MultiPoint)?
+                        }
+                        Some(Value::LineString(_)) => {
+                            feature.try_into().map(Feature::LineString)?
+                        }
+                        Some(Value::MultiLineString(_)) => {
+                            feature.try_into().map(Feature::MultiLineString)?
+                        }
+                        Some(Value::Polygon(_)) => feature.try_into().map(Feature::Polygon)?,
+                        Some(Value::MultiPolygon(_)) => {
+                            feature.try_into().map(Feature::MultiPolygon)?
+                        }
+                    };
+
+                    let mut iter = tree.locate_in_envelope_intersecting(&feature.envelope());
+                    let gdal_geometry = match feature {
+                        Feature::Point(point) => point.geo_point().to_gdal(),
+                        Feature::MultiPoint(m_point) => m_point.geo_points().to_gdal(),
+                        Feature::LineString(line) => line.geo_line().to_gdal(),
+                        Feature::MultiLineString(m_lines) => m_lines.geo_lines().to_gdal(),
+                        Feature::Polygon(polygon) => polygon.geo_polygon().to_gdal(),
+                        Feature::MultiPolygon(m_polygon) => m_polygon.geo_polygons().to_gdal(),
+                    };
                     while let Some(Feature::Polygon(p)) = iter.next() {
                         let inter = BooleanOp::<f64>::intersection(
                             &create_geo_polygon(p.polygon()),
