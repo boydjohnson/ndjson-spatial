@@ -43,9 +43,15 @@ pub fn transform<R: BufRead, W: Write>(
         if let geojson::GeoJson::Feature(feature) =
             line.map_err(|e| NdJsonSpatialError::Error(format!("Error reading Geojson: {:?}", e)))?
         {
-            let feat: Feature = feature.try_into().map_err(|e| {
+            let feat: Feature = match feature.try_into().map_err(|e| {
                 NdJsonSpatialError::Error(format!("Error converting from Geojson: {:?}", e))
-            })?;
+            }) {
+                Ok(f) => f,
+                Err(err) => {
+                    writeln!(std::io::stderr(), "{:?}", err).expect("Unable to write to stderr");
+                    continue;
+                }
+            };
             let gdal_geometry = match &feat {
                 Feature::LineString(l) => l.geo_line().to_gdal(),
                 Feature::Point(p) => p.geo_point().to_gdal(),
