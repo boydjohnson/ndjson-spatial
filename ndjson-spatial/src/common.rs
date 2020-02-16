@@ -14,6 +14,10 @@
 * limitations under the License.
 */
 
+use gdal::errors::Error;
+use gdal::vector::{Geometry, ToGdal};
+use geojson_rstar::Feature;
+
 pub enum GeometryType {
     Point,
     Line,
@@ -34,5 +38,16 @@ impl GeometryType {
             "multipolygon" => Some(GeometryType::MultiPolygon),
             _ => None,
         }
+    }
+}
+
+pub fn geojson_to_gdal(feature: &Feature) -> Result<Geometry, Error> {
+    match feature {
+        Feature::Point(p) => p.geo_point().to_gdal(),
+        Feature::LineString(l) => l.geo_line().to_gdal(),
+        Feature::Polygon(p) => p.geo_polygon().to_gdal(),
+        Feature::MultiPoint(p) => p.geo_points().to_gdal(),
+        Feature::MultiLineString(l) => l.geo_lines().to_gdal(),
+        Feature::MultiPolygon(p) => p.geo_polygons().to_gdal(),
     }
 }

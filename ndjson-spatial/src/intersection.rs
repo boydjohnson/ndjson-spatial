@@ -14,11 +14,11 @@
 * limitations under the License.
 */
 
-use crate::common::GeometryType;
-use geo_booleanop::boolean::BooleanOp;
-use geojson::{GeoJson, Geometry};
-use geojson_rstar::conversion::create_geo_polygon;
-use geojson_rstar::{Feature, PolygonFeature};
+use crate::common::{geojson_to_gdal, GeometryType};
+use gdal::vector::GIntersection;
+use geojson::GeoJson;
+use geojson_rstar::Feature;
+use ndjson_common::common::to_geo_json;
 use ndjson_common::error::NdJsonSpatialError;
 use ndjson_common::ndjson::NdJsonGeojsonReader;
 use rstar::{RTree, RTreeObject};
@@ -115,37 +115,50 @@ pub fn intersection(reference_file: File, geometry_type: &str) -> Result<(), NdJ
         match geojson {
             Ok(geojson) => {
                 if let GeoJson::Feature(feature) = geojson {
-                    let mut polygon: PolygonFeature = feature
+                    let feat: Feature = feature
                         .try_into()
                         .map_err(|e| NdJsonSpatialError::Error(format!("Error {:?}", e)))?;
+
+                    let incoming = geojson_to_gdal(&feat);
+
                     let mut acc = vec![];
-                    let mut iter = tree.locate_in_envelope_intersecting(&polygon.envelope());
-                    while let Some(Feature::Polygon(p)) = iter.next() {
-                        let inter = BooleanOp::<f64>::intersection(
-                            &create_geo_polygon(p.polygon()),
-                            &create_geo_polygon(polygon.polygon()),
-                        );
-                        if !inter.0.is_empty() {
-                            acc.push((inter, polygon.properties.take()));
+
+                    for inter in tree.locate_in_envelope_intersecting(&feat.envelope()) {
+                        let g = geojson_to_gdal(inter);
+
+                        match (&incoming, &g) {
+                            (Ok(first), Ok(other)) => {
+                                if let Some(gdal_geom) = first.intersection(&other) {
+                                    let geo_geometry: geo_types::Geometry<f64> = gdal_geom.into();
+
+                                    let mut feat: geojson::Feature = feat.clone().into();
+
+                                    let geo_json_value = to_geo_json(&geo_geometry);
+
+                                    feat.geometry = Some(geojson::Geometry::new(geo_json_value));
+
+                                    let feat: Feature = feat.try_into().map_err(|e| {
+                                        NdJsonSpatialError::Error(format!(
+                                            "Error converting from Geojson: {:?}",
+                                            e
+                                        ))
+                                    })?;
+
+                                    let feat: geojson::Feature = feat.into();
+                                    acc.push(feat);
+                                }
+                            }
+                            _ => {
+                                writeln!(std::io::stderr(), "Error converting to gdal types")
+                                    .expect("Unable to write to stderr");
+                            }
                         }
                     }
-                    let features = acc
-                        .into_iter()
-                        .map(|(m, p)| ((&m).into(), p))
-                        .map(|(v, p)| (Geometry::new(v), p))
-                        .map(|(g, p)| geojson::Feature {
-                            bbox: None,
-                            geometry: Some(g),
-                            id: None,
-                            properties: p,
-                            foreign_members: None,
-                        })
-                        .collect::<Vec<geojson::Feature>>();
-                    if !features.is_empty() {
-                        for feature in features {
-                            let f = GeoJson::Feature(feature);
-                            writeln!(::std::io::stdout(), "{}", f.to_string())
-                                .expect("Error writing to stdout");
+
+                    for feat in acc {
+                        if let Err(err) = writeln!(std::io::stdout(), "{}", feat) {
+                            writeln!(std::io::stderr(), "Error writing to stdout: {}", err)
+                                .expect("Unable to write to stderr");
                         }
                     }
                 }

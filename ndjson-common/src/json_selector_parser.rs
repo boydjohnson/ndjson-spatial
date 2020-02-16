@@ -86,7 +86,7 @@ fn parse_string(s: CompleteStr) -> Result<String, std::convert::Infallible> {
 named!(
     parse_self_signifier<CompleteStr, Option<ArraySelection>>,
     do_parse!(
-        tag!("d") >> 
+        tag!("d") >>
         index: opt!(complete!(parse_index)) >>
         (index.map(|i| ArraySelection { index: i}))
     )
