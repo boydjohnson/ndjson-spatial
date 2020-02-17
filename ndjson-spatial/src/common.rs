@@ -49,5 +49,6 @@ pub fn geojson_to_gdal(feature: &Feature) -> Result<Geometry, Error> {
         Feature::MultiPoint(p) => p.geo_points().to_gdal(),
         Feature::MultiLineString(l) => l.geo_lines().to_gdal(),
         Feature::MultiPolygon(p) => p.geo_polygons().to_gdal(),
+        Feature::GeometryCollection(g) => g.geo_geometry().to_gdal(),
     }
 }
