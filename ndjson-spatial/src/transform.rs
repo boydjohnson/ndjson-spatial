@@ -14,8 +14,8 @@
 * limitations under the License.
 */
 
+use crate::common::geojson_to_gdal;
 use gdal::spatial_ref::{CoordTransform, SpatialRef};
-use gdal::vector::ToGdal;
 use geo::Geometry;
 use geojson_rstar::Feature;
 use ndjson_common::common::to_geo_json;
@@ -43,17 +43,16 @@ pub fn transform<R: BufRead, W: Write>(
         if let geojson::GeoJson::Feature(feature) =
             line.map_err(|e| NdJsonSpatialError::Error(format!("Error reading Geojson: {:?}", e)))?
         {
-            let feat: Feature = feature.try_into().map_err(|e| {
+            let feat: Feature = match feature.try_into().map_err(|e| {
                 NdJsonSpatialError::Error(format!("Error converting from Geojson: {:?}", e))
-            })?;
-            let gdal_geometry = match &feat {
-                Feature::LineString(l) => l.geo_line().to_gdal(),
-                Feature::Point(p) => p.geo_point().to_gdal(),
-                Feature::Polygon(p) => p.geo_polygon().to_gdal(),
-                Feature::MultiPoint(p) => p.geo_points().to_gdal(),
-                Feature::MultiLineString(l) => l.geo_lines().to_gdal(),
-                Feature::MultiPolygon(p) => p.geo_polygons().to_gdal(),
+            }) {
+                Ok(f) => f,
+                Err(err) => {
+                    writeln!(std::io::stderr(), "{:?}", err).expect("Unable to write to stderr");
+                    continue;
+                }
             };
+            let gdal_geometry = geojson_to_gdal(&feat);
 
             let gdal_geometry = gdal_geometry.map_err(|e| {
                 NdJsonSpatialError::Error(format!("Error converting to Gdal: {}", e))
