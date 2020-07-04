@@ -18,7 +18,7 @@ use geo::algorithm::{
     area::Area,
     orient::{Direction, Orient},
 };
-use geojson::Value;
+use geojson::{Feature, Value};
 use geojson_rstar::conversion::{create_geo_multi_polygon, create_geo_polygon};
 use ndjson_common::{
     common::calculate_bounding_box_if_not_exists, error::NdJsonSpatialError,
@@ -56,28 +56,38 @@ where
     OUT: Write,
 {
     pub fn area(&mut self, field_name: String, bbox: bool) -> Result<(), NdJsonSpatialError> {
-        for geo in NdJsonGeojsonReader::new(&mut self.std_in) {
-            if let Ok(geojson::GeoJson::Feature(mut feat)) = geo {
-                let area = match feat.geometry.as_ref().map(|g| &g.value) {
-                    Some(Value::MultiPolygon(ref multi_polygon)) => {
-                        let geo_multi_polygon = create_geo_multi_polygon(multi_polygon);
-                        geo_multi_polygon.orient(Direction::Default).area()
+        for feat in NdJsonGeojsonReader::new(&mut self.std_in)
+            .filter_map(|geo| {
+                if let Ok(geojson::GeoJson::Feature(feat)) = geo {
+                    match feat.geometry.as_ref().map(|g| &g.value) {
+                        Some(Value::MultiPolygon(ref multi_polygon)) => {
+                            let geo_multi_polygon = create_geo_multi_polygon(multi_polygon);
+                            Some((feat, geo_multi_polygon.orient(Direction::Default).area()))
+                        }
+                        Some(Value::Polygon(ref polygon)) => {
+                            let geo_polygon = create_geo_polygon(polygon);
+                            Some((feat, geo_polygon.orient(Direction::Default).area()))
+                        }
+                        None => Some((feat, 0.0)),
+                        _ => {
+                            writeln!(
+                                std::io::stderr(),
+                                "Error: area called on geometry other than polygon or multipolygon"
+                            )
+                            .expect("Unable to write to stderr");
+                            exit(1);
+                        }
                     }
-                    Some(Value::Polygon(ref polygon)) => {
-                        let geo_polygon = create_geo_polygon(polygon);
-                        geo_polygon.orient(Direction::Default).area()
-                    }
-                    None => 0.0,
-                    _ => {
-                        writeln!(
-                            std::io::stderr(),
-                            "Error: area called on geometry other than polygon or multipolygon"
-                        )
-                        .expect("Unable to write to stderr");
-                        exit(1);
-                    }
-                };
-
+                } else {
+                    writeln!(
+                        std::io::stderr(),
+                        "Error: Found FeatureCollection not Feature"
+                    )
+                    .expect("Unable to write to stderr");
+                    None
+                }
+            })
+            .map::<Result<Feature, NdJsonSpatialError>, _>(|(mut feat, area)| {
                 let a = serde_json::Number::from_f64(area)
                     .ok_or_else(|| {
                         NdJsonSpatialError::Error("Error converting f64 to Json number".to_string())
@@ -87,11 +97,18 @@ where
                 feat.properties
                     .get_or_insert_with(Map::new)
                     .insert(field_name.clone(), a);
-
-                if bbox {
-                    calculate_bounding_box_if_not_exists(&mut feat);
+                Ok(feat)
+            })
+            .map(|mut feat| {
+                if let Ok(feat) = &mut feat {
+                    if bbox {
+                        calculate_bounding_box_if_not_exists(feat);
+                    }
                 }
-
+                feat
+            })
+        {
+            if let Ok(feat) = feat {
                 writeln!(self.std_out, "{}", feat.to_string()).expect("Unable to write to stdout");
             }
         }
