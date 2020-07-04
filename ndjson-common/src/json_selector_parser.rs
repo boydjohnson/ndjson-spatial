@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-use nom::digit;
 use nom::{
-    complete, do_parse, many0, map_res, named, opt, rest, tag, take_till1, take_while,
+    complete, digit, do_parse, many0, map_res, named, opt, rest, tag, take_till1, take_while,
     types::CompleteStr, whitespace::sp,
 };
-use std::num::{ParseFloatError, ParseIntError};
-use std::str::FromStr;
+use std::{
+    num::{ParseFloatError, ParseIntError},
+    str::FromStr,
+};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ArraySelection {

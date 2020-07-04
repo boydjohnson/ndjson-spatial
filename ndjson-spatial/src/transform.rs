@@ -18,11 +18,11 @@ use crate::common::geojson_to_gdal;
 use gdal::spatial_ref::{CoordTransform, SpatialRef};
 use geo::Geometry;
 use geojson_rstar::Feature;
-use ndjson_common::common::to_geo_json;
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::ndjson::NdJsonGeojsonReader;
-use std::convert::TryInto;
-use std::io::{BufRead, Write};
+use ndjson_common::{common::to_geo_json, error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
+use std::{
+    convert::TryInto,
+    io::{BufRead, Write},
+};
 
 pub enum CrsSpecification {
     Epsg(u32),

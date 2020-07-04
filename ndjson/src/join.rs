@@ -15,12 +15,12 @@
 */
 
 use geojson::GeoJson;
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::ndjson::NdJsonGeojsonReader;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::Write;
-use std::io::{BufRead, BufReader};
+use ndjson_common::{error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+};
 
 pub fn join(
     reference_file: File,

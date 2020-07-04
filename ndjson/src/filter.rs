@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::json_selector_parser::{
-    parse_selector_f64, parse_selector_string, parse_selector_u64, Compare, Identifier,
+use ndjson_common::{
+    error::NdJsonSpatialError,
+    json_selector_parser::{
+        parse_selector_f64, parse_selector_string, parse_selector_u64, Compare, Identifier,
+    },
+    ndjson::NdjsonReader,
 };
-use ndjson_common::ndjson::NdjsonReader;
 use serde_json::Value;
-use std::io::Write;
-use std::str::FromStr;
+use std::{io::Write, str::FromStr};
 
 pub fn ndjson_filter(expression: String) -> Result<(), NdJsonSpatialError> {
     if let Ok((_, (compare, identifiers))) = parse_selector_u64(expression.as_str().into()) {

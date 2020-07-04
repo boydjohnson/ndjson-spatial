@@ -14,8 +14,10 @@
 * limitations under the License.
 */
 
-use gdal::errors::Error;
-use gdal::vector::{Geometry, ToGdal};
+use gdal::{
+    errors::Error,
+    vector::{Geometry, ToGdal},
+};
 use geojson_rstar::Feature;
 
 pub enum GeometryType {
