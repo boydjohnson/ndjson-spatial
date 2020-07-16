@@ -16,12 +16,13 @@
 
 use geojson::GeoJson;
 use geojson_rstar::PointFeature;
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::ndjson::NdJsonGeojsonReader;
+use ndjson_common::{error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
 use rstar::{PointDistance, RTree};
-use std::convert::TryInto;
-use std::fs::File;
-use std::io::{Read, Write};
+use std::{
+    convert::TryInto,
+    fs::File,
+    io::{Read, Write},
+};
 
 pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialError> {
     let mut geojson_string = String::new();

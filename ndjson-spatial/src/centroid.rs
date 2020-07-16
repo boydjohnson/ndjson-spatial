@@ -14,13 +14,10 @@
 * limitations under the License.
 */
 
-use geo::algorithm::centroid::Centroid;
-use geo::Point;
+use geo::{algorithm::centroid::Centroid, Point};
 use geojson::{Feature, GeoJson, Geometry};
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::ndjson::NdJsonGeojsonReader;
-use std::convert::TryInto;
-use std::io::Write;
+use ndjson_common::{error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
+use std::{convert::TryInto, io::Write};
 
 pub fn compute_centroid() {
     for geojson in NdJsonGeojsonReader::default() {

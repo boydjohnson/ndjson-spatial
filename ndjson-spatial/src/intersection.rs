@@ -18,13 +18,13 @@ use crate::common::{geojson_to_gdal, GeometryType};
 use gdal::vector::GeometryIntersection;
 use geojson::GeoJson;
 use geojson_rstar::Feature;
-use ndjson_common::common::to_geo_json;
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::ndjson::NdJsonGeojsonReader;
+use ndjson_common::{common::to_geo_json, error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
 use rstar::{RTree, RTreeObject};
-use std::convert::TryInto;
-use std::fs::File;
-use std::io::{Read, Write};
+use std::{
+    convert::TryInto,
+    fs::File,
+    io::{Read, Write},
+};
 
 pub fn read_geojson_file(mut reference_file: File) -> Result<GeoJson, NdJsonSpatialError> {
     let mut geojson_string = String::new();

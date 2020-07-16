@@ -15,8 +15,7 @@
  */
 
 use geojson::{FeatureCollection, GeoJson};
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::ndjson::NdJsonGeojsonReader;
+use ndjson_common::{error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
 use std::io::Write;
 
 pub fn to_geojson() -> Result<(), NdJsonSpatialError> {

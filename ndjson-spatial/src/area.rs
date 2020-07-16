@@ -14,17 +14,21 @@
 * limitations under the License.
 */
 
-use geo::algorithm::area::Area;
-use geo::algorithm::orient::{Direction, Orient};
+use geo::algorithm::{
+    area::Area,
+    orient::{Direction, Orient},
+};
 use geojson::Value;
 use geojson_rstar::conversion::{create_geo_multi_polygon, create_geo_polygon};
-use ndjson_common::common::calculate_bounding_box_if_not_exists;
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::ndjson::NdJsonGeojsonReader;
+use ndjson_common::{
+    common::calculate_bounding_box_if_not_exists, error::NdJsonSpatialError,
+    ndjson::NdJsonGeojsonReader,
+};
 use serde_json::Map;
-use std::io::{BufRead, BufReader, BufWriter};
-use std::io::{Stdin, Stdout, Write};
-use std::process::exit;
+use std::{
+    io::{BufRead, BufReader, BufWriter, Stdin, Stdout, Write},
+    process::exit,
+};
 
 pub struct NdjsonSpatialArea<IN, OUT> {
     std_in: IN,
