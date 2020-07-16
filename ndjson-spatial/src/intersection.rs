@@ -15,7 +15,7 @@
 */
 
 use crate::common::{geojson_to_gdal, GeometryType};
-use gdal::vector::GIntersection;
+use gdal::vector::GeometryIntersection;
 use geojson::GeoJson;
 use geojson_rstar::Feature;
 use ndjson_common::common::to_geo_json;
