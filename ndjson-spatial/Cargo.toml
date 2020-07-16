@@ -10,7 +10,7 @@ name = "ndjson-spatial"
 
 [dependencies]
 clap = "^2.33"
-gdal = { git = "https://github.com/boydjohnson/gdal" }
+gdal = { git = "https://github.com/georust/gdal" }
 geo = "^0.12"
 geo-booleanop = "^0.2"
 geo-types = "^0.4"
