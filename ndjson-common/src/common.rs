@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-use geo::prelude::BoundingRect;
-use geo::Rect;
+use geo::{prelude::BoundingRect, Rect};
 use geojson::{Feature, Value};
 use geojson_rstar::conversion;
 

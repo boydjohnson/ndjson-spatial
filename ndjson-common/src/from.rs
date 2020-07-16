@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-use crate::error::NdJsonSpatialError;
-use crate::json_selector_parser::Identifier;
+use crate::{error::NdJsonSpatialError, json_selector_parser::Identifier};
 use encode_unicode::{error::InvalidUtf8Slice, IterExt, Utf8Char};
 use std::io::{BufReader, Read, Write};
 

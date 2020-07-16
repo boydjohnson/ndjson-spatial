@@ -15,11 +15,10 @@
  */
 
 use crate::filter::select_from_json_object;
-use ndjson_common::error::NdJsonSpatialError;
-use ndjson_common::json_selector_parser::parse_json_selector;
-use ndjson_common::ndjson::NdjsonReader;
-use serde_json::ser::to_string;
-use serde_json::Value;
+use ndjson_common::{
+    error::NdJsonSpatialError, json_selector_parser::parse_json_selector, ndjson::NdjsonReader,
+};
+use serde_json::{ser::to_string, Value};
 use std::io::Write;
 
 pub fn pick_field(expression: &str) -> Result<(), NdJsonSpatialError> {

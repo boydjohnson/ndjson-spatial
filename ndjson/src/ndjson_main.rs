@@ -15,9 +15,7 @@
 */
 
 use clap::{App, Arg, ArgMatches, SubCommand};
-use std::fs::File;
-use std::io::Write;
-use std::process::exit;
+use std::{fs::File, io::Write, process::exit};
 
 mod filter;
 mod from_json;
