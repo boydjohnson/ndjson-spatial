@@ -58,7 +58,7 @@ pub fn calculate_bounding_box_if_not_exists(feat: &mut Feature) {
 
 fn do_calc_bounding_box(bounding_rect: Option<Rect<f64>>) -> Option<Vec<f64>> {
     if let Some(b) = bounding_rect {
-        Some(vec![b.min.x, b.max.x, b.min.y, b.max.y])
+        Some(vec![b.min().x, b.max().x, b.min().y, b.max().y])
     } else {
         None
     }
@@ -72,7 +72,7 @@ pub fn to_geo_json(geo_geometry: &geo::Geometry<f64>) -> geojson::Value {
         geo::Geometry::MultiPoint(p) => geojson::Value::from(p),
         geo::Geometry::MultiPolygon(p) => geojson::Value::from(p),
         geo::Geometry::MultiLineString(p) => geojson::Value::from(p),
-        geo::Geometry::Line(_) => panic!("Line<f64> used and not supported"),
         geo::Geometry::GeometryCollection(g) => geojson::Value::from(g),
+        _ => panic!("Unsupported geometry type"),
     }
 }

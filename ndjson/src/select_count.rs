@@ -19,7 +19,7 @@ use geojson::GeoJson;
 use ndjson_common::{
     error::NdJsonSpatialError,
     json_selector_parser::{
-        parse_json_selector, parse_selector_f64, parse_selector_u64, Compare, Identifier,
+        parse_json_selector, parse_selector_f64, parse_selector_u64, Compare, Selector,
     },
     ndjson::NdJsonGeojsonReader,
 };
@@ -42,9 +42,9 @@ pub fn select_count(
 }
 
 fn count_and_then_write_to_stdout<T>(
-    exp_identifiers: Vec<Identifier>,
+    exp_identifiers: Vec<Selector>,
     compare: Compare<T>,
-    identifiers: Vec<Identifier>,
+    identifiers: Vec<Selector>,
     field_name: &str,
 ) -> Result<(), NdJsonSpatialError>
 where

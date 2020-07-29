@@ -17,7 +17,7 @@
 use ndjson_common::{
     error::NdJsonSpatialError,
     json_selector_parser::{
-        parse_selector_f64, parse_selector_string, parse_selector_u64, Compare, Identifier,
+        parse_selector_f64, parse_selector_string, parse_selector_u64, Compare, Selector,
     },
     ndjson::NdjsonReader,
 };
@@ -39,7 +39,7 @@ pub fn ndjson_filter(expression: String) -> Result<(), NdJsonSpatialError> {
 
 fn write_to_stdout_if_filter_is_true<T>(
     compare: Compare<T>,
-    identifiers: Vec<Identifier>,
+    identifiers: Vec<Selector>,
 ) -> Result<(), NdJsonSpatialError>
 where
     T: FromStr + PartialOrd,
@@ -67,12 +67,12 @@ where
 
 pub fn select_from_json_object(
     value: Value,
-    identifiers: &[Identifier],
+    identifiers: &[Selector],
 ) -> Result<Value, NdJsonSpatialError> {
     let mut last_value = value;
     for identifier in identifiers {
         match identifier {
-            Identifier::Identifier(ident) => {
+            Selector::Identifier(ident) => {
                 if let Value::Array(_) = last_value {
                     return Err(NdJsonSpatialError::Error(format!(
                         "Unable to get attribute {} on array",
@@ -89,9 +89,9 @@ pub fn select_from_json_object(
                     )));
                 }
             }
-            Identifier::ArraySelection(selection) => {
+            Selector::Index(selection) => {
                 if let Value::Array(array) = last_value {
-                    last_value = array.get(selection.index()).cloned().ok_or_else(|| {
+                    last_value = array.get(*selection).cloned().ok_or_else(|| {
                         NdJsonSpatialError::Error("Index out of bounds".to_string())
                     })?;
                 } else {
