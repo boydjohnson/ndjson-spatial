@@ -61,9 +61,9 @@ fn main() {
 
         let field_name = args.value_of("field-name").expect("field-name is required");
 
-    if let Err(e) = select_count::select_count(expression, selector, field_name) {
-        writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
-    }
+        if let Err(e) = select_count::select_count(expression, selector, field_name) {
+            writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
+        }
     } else if let Some("join") = args.subcommand_name() {
         let args = args
             .subcommand_matches("join")
