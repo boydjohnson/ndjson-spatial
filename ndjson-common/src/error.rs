@@ -24,3 +24,9 @@ impl From<geos::Error> for NdJsonSpatialError {
         NdJsonSpatialError::Error(format!("Geos Error: {}", other))
     }
 }
+
+impl From<std::convert::Infallible> for NdJsonSpatialError {
+    fn from(_: std::convert::Infallible) -> Self {
+        panic!("Error is Infallible")
+    }
+}
