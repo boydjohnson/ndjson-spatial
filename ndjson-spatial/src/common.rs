@@ -15,9 +15,10 @@
 */
 
 use gdal::{
-    errors::Error,
-    vector::{Geometry, ToGdal},
+    errors::GdalError,
+    vector::{Geometry as GdalGeometry, ToGdal},
 };
+use geojson::{Geometry, Value};
 use geojson_rstar::Feature;
 
 pub enum GeometryType {
@@ -43,7 +44,7 @@ impl GeometryType {
     }
 }
 
-pub fn geojson_to_gdal(feature: &Feature) -> Result<Geometry, Error> {
+pub fn geojson_to_gdal(feature: &Feature) -> Result<GdalGeometry, GdalError> {
     match feature {
         Feature::Point(p) => p.geo_point().to_gdal(),
         Feature::LineString(l) => l.geo_line().to_gdal(),
@@ -53,4 +54,17 @@ pub fn geojson_to_gdal(feature: &Feature) -> Result<Geometry, Error> {
         Feature::MultiPolygon(p) => p.geo_polygons().to_gdal(),
         Feature::GeometryCollection(g) => g.geo_geometry().to_gdal(),
     }
+}
+
+pub fn geojson_rstar_to_geojson_geometry(feature: &Feature) -> Geometry {
+    let val = match feature {
+        Feature::Point(p) => Value::Point(p.point().to_owned()),
+        Feature::LineString(l) => Value::LineString(l.line().to_owned()),
+        Feature::MultiLineString(l) => Value::MultiLineString(l.lines().to_owned()),
+        Feature::Polygon(p) => Value::Polygon(p.polygon().to_owned()),
+        Feature::MultiPoint(p) => Value::MultiPoint(p.points().to_owned()),
+        Feature::MultiPolygon(p) => Value::MultiPolygon(p.polygons().to_owned()),
+        Feature::GeometryCollection(g) => Value::GeometryCollection(g.geometries().to_owned()),
+    };
+    Geometry::new(val)
 }

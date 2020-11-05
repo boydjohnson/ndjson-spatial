@@ -14,9 +14,15 @@
  * limitations under the License.
  */
 
-use ndjson_common::{error::NdJsonSpatialError, from::generic_split};
+use ndjson_common::{
+    error::NdJsonSpatialError, from::generic_split, json_selector_parser::Selector,
+};
 
 pub fn split() -> Result<(), NdJsonSpatialError> {
-    generic_split(std::io::stdin(), std::io::stdout(), "features")?;
+    generic_split(
+        &mut std::io::stdin().lock(),
+        std::io::stdout().lock(),
+        vec![Selector::Identifier("features".to_string())],
+    )?;
     Ok(())
 }
