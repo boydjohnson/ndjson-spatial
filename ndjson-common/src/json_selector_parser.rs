@@ -22,17 +22,7 @@ use std::{
     num::{ParseFloatError, ParseIntError},
     str::FromStr,
 };
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ArraySelection {
-    index: u64,
-}
-
-impl ArraySelection {
-    pub fn index(&self) -> usize {
-        self.index as usize
-    }
-}
+pub use yajlish::ndjson_handler::Selector;
 
 #[derive(Debug, PartialEq)]
 pub enum Comparator {
@@ -66,14 +56,12 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Identifier {
-    Identifier(String),
-    ArraySelection(ArraySelection),
-}
-
 fn parse_u64(s: CompleteStr) -> Result<u64, ParseIntError> {
     s.parse::<u64>()
+}
+
+fn parse_usize(s: CompleteStr) -> Result<usize, ParseIntError> {
+    s.parse()
 }
 
 fn parse_f64(s: CompleteStr) -> Result<f64, ParseFloatError> {
@@ -85,31 +73,31 @@ fn parse_string(s: CompleteStr) -> Result<String, std::convert::Infallible> {
 }
 
 named!(
-    parse_self_signifier<CompleteStr, Option<ArraySelection>>,
+    parse_self_signifier<CompleteStr, Option<Selector>>,
     do_parse!(
         tag!("d") >>
         index: opt!(complete!(parse_index)) >>
-        (index.map(|i| ArraySelection { index: i}))
+        (index.map(Selector::Index))
     )
 );
 
 named!(
-    parse_index<CompleteStr, u64>,
+    parse_index<CompleteStr, usize>,
     do_parse!(
         tag!("[") >>
-        index: map_res!(digit, parse_u64) >>
+        index: map_res!(digit, parse_usize) >>
         tag!("]") >>
         (index)
     )
 );
 
 named!(
-    parse_dot_plus_identifier<CompleteStr, (Identifier, Option<ArraySelection>)>,
+    parse_dot_plus_identifier<CompleteStr, (Selector, Option<Selector>)>,
     do_parse!(
         tag!(".") >>
         identifier: take_while!(is_not_dot_or_array_bracket_or_comparator) >>
         index: opt!(parse_index) >>
-        (Identifier::Identifier(identifier.to_string()), index.map(|i| ArraySelection {index: i}))
+        (Selector::Identifier(identifier.to_string()), index.map(Selector::Index))
     )
 );
 
@@ -126,19 +114,17 @@ fn is_array_bracket(c: char) -> bool {
 }
 
 fn combine_identifiers(
-    first: Option<ArraySelection>,
-    next: Vec<(Identifier, Option<ArraySelection>)>,
-) -> Vec<Identifier> {
+    first: Option<Selector>,
+    next: Vec<(Selector, Option<Selector>)>,
+) -> Vec<Selector> {
     let mut items = vec![];
     if let Some(f) = first {
-        let f = Identifier::ArraySelection(f);
         items.push(f);
     }
 
     for (ident, optional_second) in next {
         items.push(ident);
         if let Some(s) = optional_second {
-            let s = Identifier::ArraySelection(s);
             items.push(s);
         }
     }
@@ -147,12 +133,12 @@ fn combine_identifiers(
 }
 
 named!(
-    parse_many_identifiers<CompleteStr, Vec<(Identifier, Option<ArraySelection>)>>,
+    parse_many_identifiers<CompleteStr, Vec<(Selector, Option<Selector>)>>,
     many0!(complete!(parse_dot_plus_identifier))
 );
 
 named!(
-    pub parse_json_selector<CompleteStr, Vec<Identifier>>,
+    pub parse_json_selector<CompleteStr, Vec<Selector>>,
     do_parse!(
         first_array_selection: parse_self_signifier >>
         identifiers: parse_many_identifiers >>
@@ -235,7 +221,7 @@ named!(
 );
 
 named!(
-    pub parse_selector_u64<CompleteStr, (Compare<u64>, Vec<Identifier>)>,
+    pub parse_selector_u64<CompleteStr, (Compare<u64>, Vec<Selector>)>,
     do_parse!(
         identifiers: parse_json_selector >>
         opt!(sp) >>
@@ -245,7 +231,7 @@ named!(
 );
 
 named!(
-    pub parse_selector_f64<CompleteStr, (Compare<f64>, Vec<Identifier>)>,
+    pub parse_selector_f64<CompleteStr, (Compare<f64>, Vec<Selector>)>,
     do_parse!(
         identifiers: parse_json_selector >>
         opt!(sp) >>
@@ -255,7 +241,7 @@ named!(
 );
 
 named!(
-    pub parse_selector_string<CompleteStr, (Compare<String>, Vec<Identifier>)>,
+    pub parse_selector_string<CompleteStr, (Compare<String>, Vec<Selector>)>,
     do_parse!(
         identifiers: parse_json_selector >>
         opt!(sp) >>
@@ -273,11 +259,11 @@ mod tests {
         assert_eq!(parse_self_signifier("d".into()), Ok(("".into(), None)));
         assert_eq!(
             parse_self_signifier("d[0]".into()),
-            Ok(("".into(), Some(ArraySelection { index: 0 })))
+            Ok(("".into(), Some(Selector::Index(0))))
         );
         assert_eq!(
             parse_self_signifier("d[24]".into()),
-            Ok(("".into(), Some(ArraySelection { index: 24 })))
+            Ok(("".into(), Some(Selector::Index(24))))
         );
 
         assert_eq!(
@@ -299,7 +285,7 @@ mod tests {
             parse_dot_plus_identifier(".properties.AREA".into()),
             Ok((
                 ".AREA".into(),
-                (Identifier::Identifier("properties".to_string()), None)
+                (Selector::Identifier("properties".to_string()), None)
             ))
         );
 
@@ -307,7 +293,7 @@ mod tests {
             parse_dot_plus_identifier(".properties.contains[5]".into()),
             Ok((
                 ".contains[5]".into(),
-                (Identifier::Identifier("properties".to_string()), None)
+                (Selector::Identifier("properties".to_string()), None)
             ))
         );
 
@@ -316,8 +302,8 @@ mod tests {
             Ok((
                 "".into(),
                 (
-                    Identifier::Identifier("contains".to_string()),
-                    Some(ArraySelection { index: 5 })
+                    Selector::Identifier("contains".to_string()),
+                    Some(Selector::Index(5))
                 )
             ))
         );
@@ -335,8 +321,8 @@ mod tests {
             Ok((
                 ">".into(),
                 vec![
-                    (Identifier::Identifier("properties".to_string()), None),
-                    (Identifier::Identifier("AREA".to_string()), None)
+                    (Selector::Identifier("properties".to_string()), None),
+                    (Selector::Identifier("AREA".to_string()), None)
                 ]
             ))
         );
@@ -349,8 +335,8 @@ mod tests {
             Ok((
                 "".into(),
                 vec![
-                    Identifier::Identifier("properties".to_string()),
-                    Identifier::Identifier("AREA".to_string())
+                    Selector::Identifier("properties".to_string()),
+                    Selector::Identifier("AREA".to_string())
                 ]
             ))
         )
@@ -435,8 +421,8 @@ mod tests {
                         value: 5.5
                     },
                     vec![
-                        Identifier::Identifier("properties".to_string()),
-                        Identifier::Identifier("AREA".to_string())
+                        Selector::Identifier("properties".to_string()),
+                        Selector::Identifier("AREA".to_string())
                     ]
                 )
             ))
@@ -452,9 +438,9 @@ mod tests {
                         value: 40000
                     },
                     vec![
-                        Identifier::ArraySelection(ArraySelection { index: 5 }),
-                        Identifier::Identifier("manager".to_string()),
-                        Identifier::Identifier("pay".to_string())
+                        Selector::Index(5),
+                        Selector::Identifier("manager".to_string()),
+                        Selector::Identifier("pay".to_string())
                     ]
                 )
             ))

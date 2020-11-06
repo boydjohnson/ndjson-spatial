@@ -14,20 +14,16 @@
 * limitations under the License.
 */
 
-use geo::algorithm::{
-    area::Area,
-    orient::{Direction, Orient},
-};
 use geojson::Value;
-use geojson_rstar::conversion::{create_geo_multi_polygon, create_geo_polygon};
+use geos::{Geom, Geometry};
 use ndjson_common::{
     common::calculate_bounding_box_if_not_exists, error::NdJsonSpatialError,
     ndjson::NdJsonGeojsonReader,
 };
 use serde_json::Map;
 use std::{
+    convert::TryInto,
     io::{BufRead, BufReader, BufWriter, Stdin, Stdout, Write},
-    process::exit,
 };
 
 pub struct NdjsonSpatialArea<IN, OUT> {
@@ -58,24 +54,49 @@ where
     pub fn area(&mut self, field_name: String, bbox: bool) -> Result<(), NdJsonSpatialError> {
         for geo in NdJsonGeojsonReader::new(&mut self.std_in) {
             if let Ok(geojson::GeoJson::Feature(mut feat)) = geo {
-                let area = match feat.geometry.as_ref().map(|g| &g.value) {
-                    Some(Value::MultiPolygon(ref multi_polygon)) => {
-                        let geo_multi_polygon = create_geo_multi_polygon(multi_polygon);
-                        geo_multi_polygon.orient(Direction::Default).area()
-                    }
-                    Some(Value::Polygon(ref polygon)) => {
-                        let geo_polygon = create_geo_polygon(polygon);
-                        geo_polygon.orient(Direction::Default).area()
-                    }
+                let area = match feat.geometry.as_ref() {
+                    Some(geometry) => match geometry.value {
+                        Value::MultiPolygon(_) | Value::Polygon(_) => {
+                            let geos_geometry: Geometry = geometry.clone().try_into()?;
+                            geos_geometry.area()?
+                        }
+                        Value::Point(_) => {
+                            return Err(
+                                NdJsonSpatialError::Error(
+                                    "Area got called on Geojson Feature that was of type Point not polygon or multipolygon.".to_string()
+                                )
+                            );
+                        }
+                        Value::MultiPoint(_) => {
+                            return Err(
+                                NdJsonSpatialError::Error(
+                                    "Area got called on Geojson Feature that was of type MultiPoint not polygon or multipolygon.".to_string()
+                                )
+                            );
+                        }
+                        Value::LineString(_) => {
+                            return Err(
+                                NdJsonSpatialError::Error(
+                                    "Area got called on Geojson Feature that was of type LineString not polygon or multipolygon.".to_string()
+                                )
+                            );
+                        }
+                        Value::MultiLineString(_) => {
+                            return Err(
+                                NdJsonSpatialError::Error(
+                                    "Area got called on Geojson Feature that was of type MultiLineString not polygon or multipolygon.".to_string()
+                                )
+                            );
+                        }
+                        Value::GeometryCollection(_) => {
+                            return Err(
+                                NdJsonSpatialError::Error(
+                                    "Area got called on Geojson Feature that was of type GeometryCollection not polygon or multipolygon.".to_string()
+                                )
+                            );
+                        }
+                    },
                     None => 0.0,
-                    _ => {
-                        writeln!(
-                            std::io::stderr(),
-                            "Error: area called on geometry other than polygon or multipolygon"
-                        )
-                        .expect("Unable to write to stderr");
-                        exit(1);
-                    }
                 };
 
                 let a = serde_json::Number::from_f64(area)

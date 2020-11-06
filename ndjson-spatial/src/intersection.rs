@@ -14,10 +14,10 @@
 * limitations under the License.
 */
 
-use crate::common::{geojson_to_gdal, GeometryType};
-use gdal::vector::GeometryIntersection;
+use crate::common::{geojson_rstar_to_geojson_geometry, GeometryType};
 use geojson::GeoJson;
 use geojson_rstar::Feature;
+use geos::{Geom, Geometry};
 use ndjson_common::{common::to_geo_json, error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
 use rstar::{RTree, RTreeObject};
 use std::{
@@ -115,21 +115,24 @@ pub fn intersection(reference_file: File, geometry_type: &str) -> Result<(), NdJ
         match geojson {
             Ok(geojson) => {
                 if let GeoJson::Feature(feature) = geojson {
+                    let incoming: Option<Result<Geometry, _>> =
+                        feature.geometry.as_ref().map(|g| g.clone().try_into());
+
                     let feat: Feature = feature
                         .try_into()
                         .map_err(|e| NdJsonSpatialError::Error(format!("Error {:?}", e)))?;
 
-                    let incoming = geojson_to_gdal(&feat);
-
                     let mut acc = vec![];
 
                     for inter in tree.locate_in_envelope_intersecting(&feat.envelope()) {
-                        let g = geojson_to_gdal(inter);
+                        let g: Result<Geometry, _> =
+                            geojson_rstar_to_geojson_geometry(inter).try_into();
 
                         match (&incoming, &g) {
-                            (Ok(first), Ok(other)) => {
-                                if let Some(gdal_geom) = first.intersection(&other) {
-                                    let geo_geometry: geo_types::Geometry<f64> = gdal_geom.into();
+                            (Some(Ok(first)), Ok(other)) => {
+                                if let Ok(geos_geom) = first.intersection(other) {
+                                    let geo_geometry: geo_types::Geometry<f64> =
+                                        geos_geom.try_into()?;
 
                                     let mut feat: geojson::Feature = feat.clone().into();
 
@@ -149,7 +152,7 @@ pub fn intersection(reference_file: File, geometry_type: &str) -> Result<(), NdJ
                                 }
                             }
                             _ => {
-                                writeln!(std::io::stderr(), "Error converting to gdal types")
+                                writeln!(std::io::stderr(), "Error converting to geos types")
                                     .expect("Unable to write to stderr");
                             }
                         }

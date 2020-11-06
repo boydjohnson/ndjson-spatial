@@ -54,7 +54,7 @@ pub fn transform<R: BufRead, W: Write>(
             };
             let gdal_geometry = geojson_to_gdal(&feat);
 
-            let gdal_geometry = gdal_geometry.map_err(|e| {
+            let mut gdal_geometry = gdal_geometry.map_err(|e| {
                 NdJsonSpatialError::Error(format!("Error converting to Gdal: {}", e))
             })?;
 

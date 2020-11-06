@@ -25,6 +25,7 @@ mod select_count;
 mod to_json;
 
 fn main() {
+    env_logger::init();
     let args = parse_args();
 
     if let Some("filter") = args.subcommand_name() {

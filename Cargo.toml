@@ -4,3 +4,7 @@ members = [
     "ndjson-common",
     "ndjson-spatial"
 ]
+
+[profile.release]
+lto = true
+codegen-units = 1
