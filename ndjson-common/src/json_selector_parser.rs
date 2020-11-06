@@ -77,7 +77,7 @@ named!(
     do_parse!(
         tag!("d") >>
         index: opt!(complete!(parse_index)) >>
-        (index.map(|i| Selector::Index(i)))
+        (index.map(Selector::Index))
     )
 );
 
@@ -97,7 +97,7 @@ named!(
         tag!(".") >>
         identifier: take_while!(is_not_dot_or_array_bracket_or_comparator) >>
         index: opt!(parse_index) >>
-        (Selector::Identifier(identifier.to_string()), index.map(|i| Selector::Index(i)))
+        (Selector::Identifier(identifier.to_string()), index.map(Selector::Index))
     )
 );
 
