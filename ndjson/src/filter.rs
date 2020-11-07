@@ -23,41 +23,50 @@ use ndjson_common::{
     ndjson::NdjsonReader,
 };
 use serde_json::Value;
-use std::io::Write;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 
-pub fn ndjson_filter(expression: String) -> Result<(), NdJsonSpatialError> {
+pub fn ndjson_filter<R: BufRead, W: Write>(
+    expression: String,
+    read: &mut R,
+    write: &mut W,
+) -> Result<(), NdJsonSpatialError> {
+    let mut read = BufReader::with_capacity(1_000_000, read);
+    let mut write = BufWriter::with_capacity(1_000_000, write);
+
     if let Ok((_, (compare, identifiers))) = parse_selector_u64(expression.as_str().into()) {
-        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+        write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
     } else if let Ok((_, (compare, identifiers))) = parse_selector_i64(expression.as_str().into()) {
-        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+        write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
     } else if let Ok((_, (compare, identifiers))) = parse_selector_f64(expression.as_str().into()) {
-        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+        write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
     } else if let Ok((_, (compare, identifiers))) = parse_selector_bool(expression.as_str().into())
     {
-        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+        write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
     } else if let Ok((_, (compare, identifiers))) = parse_selector_null(expression.as_str().into())
     {
-        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+        write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
     } else if let Ok((_, (compare, identifiers))) =
         parse_selector_string(expression.as_str().into())
     {
-        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+        write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
     }
     Ok(())
 }
 
-fn write_to_stdout_if_filter_is_true<T>(
+fn write_to_stdout_if_filter_is_true<T, R: BufRead, W: Write>(
     compare: Compare<T>,
     identifiers: Vec<Selector>,
+    read: &mut R,
+    write: &mut W,
 ) -> Result<(), NdJsonSpatialError>
 where
     T: ParseValue,
 {
-    for value in NdjsonReader::default() {
+    for value in NdjsonReader::new(read) {
         let v = value?;
         if let Ok(value) = select_from_json_object(v.clone(), &identifiers) {
             if compare.compare(value) {
-                writeln!(::std::io::stdout(), "{}", v).expect("unable to write to stdout");
+                writeln!(write, "{}", v).expect("unable to write to stdout");
             }
         }
     }
