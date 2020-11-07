@@ -19,12 +19,12 @@ use geojson::GeoJson;
 use ndjson_common::{
     error::NdJsonSpatialError,
     json_selector_parser::{
-        parse_json_selector, parse_selector_f64, parse_selector_u64, Compare, Selector,
+        parse_json_selector, parse_selector_f64, parse_selector_u64, Compare, ParseValue, Selector,
     },
     ndjson::NdJsonGeojsonReader,
 };
 use serde_json::Value;
-use std::{io::Write, str::FromStr};
+use std::io::Write;
 
 pub fn select_count(
     expression: &str,
@@ -48,7 +48,7 @@ fn count_and_then_write_to_stdout<T>(
     field_name: &str,
 ) -> Result<(), NdJsonSpatialError>
 where
-    T: FromStr + PartialOrd,
+    T: ParseValue,
 {
     for value in NdJsonGeojsonReader::default() {
         let v = value?;
@@ -62,18 +62,8 @@ where
                     if let Value::Array(a) = value {
                         for item in &a {
                             if let Ok(val) = select_from_json_object(item.clone(), &identifiers) {
-                                match val {
-                                    Value::Number(n) => {
-                                        if compare.compare(&n.to_string()) {
-                                            count += 1;
-                                        }
-                                    }
-                                    Value::String(s) => {
-                                        if compare.compare(&s) {
-                                            count += 1;
-                                        }
-                                    }
-                                    _ => (),
+                                if compare.compare(val) {
+                                    count += 1;
                                 }
                             }
                         }

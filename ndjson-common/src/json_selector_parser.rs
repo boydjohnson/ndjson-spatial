@@ -18,11 +18,34 @@ use nom::{
     complete, digit, do_parse, many0, map_res, named, opt, rest, tag, take_till1, take_while,
     types::CompleteStr, whitespace::sp,
 };
+use serde_json::Value;
 use std::{
+    cmp::{Ordering, PartialOrd},
     num::{ParseFloatError, ParseIntError},
-    str::FromStr,
+    str::{FromStr, ParseBoolError},
 };
 pub use yajlish::ndjson_handler::Selector;
+
+pub const NULL_STR: &str = "null";
+#[derive(Debug, PartialEq)]
+pub struct Null;
+#[derive(Debug, PartialEq)]
+pub struct ParseNullError;
+
+pub enum JsonValue {
+    String(String),
+    Null(Null),
+    I64(i64),
+    U64(u64),
+    F64(f64),
+    Bool(bool),
+}
+
+impl PartialOrd for Null {
+    fn partial_cmp(&self, _: &Null) -> Option<Ordering> {
+        Some(Ordering::Equal)
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Comparator {
@@ -42,22 +65,127 @@ pub struct Compare<T> {
 
 impl<T> Compare<T>
 where
-    T: FromStr + ::std::cmp::PartialOrd,
+    T: ParseValue,
 {
-    pub fn compare(&self, other: &str) -> bool {
+    pub fn compare(&self, other: Value) -> bool {
         match self.comparator {
-            Comparator::LT => T::from_str(other).map(|o| o < self.value).unwrap_or(false),
-            Comparator::LE => T::from_str(other).map(|o| o <= self.value).unwrap_or(false),
-            Comparator::GT => T::from_str(other).map(|o| o > self.value).unwrap_or(false),
-            Comparator::GE => T::from_str(other).map(|o| o >= self.value).unwrap_or(false),
-            Comparator::EQ => T::from_str(other).map(|o| o == self.value).unwrap_or(false),
-            Comparator::NE => T::from_str(other).map(|o| o != self.value).unwrap_or(false),
+            Comparator::LT => T::parse_value(other)
+                .map(|o| o < self.value)
+                .unwrap_or(false),
+            Comparator::LE => T::parse_value(other)
+                .map(|o| o <= self.value)
+                .unwrap_or(false),
+            Comparator::GT => T::parse_value(other)
+                .map(|o| o > self.value)
+                .unwrap_or(false),
+            Comparator::GE => T::parse_value(other)
+                .map(|o| o >= self.value)
+                .unwrap_or(false),
+            Comparator::EQ => T::parse_value(other)
+                .map(|o| o == self.value)
+                .unwrap_or(false),
+            Comparator::NE => T::parse_value(other)
+                .map(|o| o != self.value)
+                .unwrap_or(false),
+        }
+    }
+}
+
+pub trait ParseValue: Sized + PartialOrd {
+    fn parse_value(val: Value) -> Option<Self>;
+}
+
+impl ParseValue for String {
+    fn parse_value(val: Value) -> Option<Self> {
+        match val {
+            Value::String(v) => Some(v),
+            Value::Null => None,
+            Value::Number(num) => Some(num.to_string()),
+            Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        }
+    }
+}
+
+impl ParseValue for u64 {
+    fn parse_value(val: Value) -> Option<Self> {
+        match val {
+            Value::String(v) => u64::from_str(&v).ok(),
+            Value::Number(num) => num.as_u64(),
+            Value::Null => None,
+            Value::Bool(_) => None,
+            _ => None,
+        }
+    }
+}
+
+impl ParseValue for i64 {
+    fn parse_value(val: Value) -> Option<Self> {
+        match val {
+            Value::String(_) => None,
+            Value::Number(num) => num.as_i64(),
+            Value::Null => None,
+            Value::Bool(_) => None,
+            _ => None,
+        }
+    }
+}
+
+impl ParseValue for f64 {
+    fn parse_value(val: Value) -> Option<Self> {
+        match val {
+            Value::String(_) => None,
+            Value::Number(num) => num.as_f64(),
+            Value::Null => None,
+            Value::Bool(_) => None,
+            _ => None,
+        }
+    }
+}
+
+impl ParseValue for bool {
+    fn parse_value(val: Value) -> Option<Self> {
+        match val {
+            Value::String(_) => None,
+            Value::Number(_) => None,
+            Value::Null => None,
+            Value::Bool(b) => Some(b),
+            _ => None,
+        }
+    }
+}
+
+impl ParseValue for Null {
+    fn parse_value(val: Value) -> Option<Self> {
+        match val {
+            Value::String(_) => None,
+            Value::Number(_) => None,
+            Value::Null => Some(Null),
+            Value::Bool(_) => None,
+            _ => None,
         }
     }
 }
 
 fn parse_u64(s: CompleteStr) -> Result<u64, ParseIntError> {
     s.parse::<u64>()
+}
+
+fn parse_i64(s: CompleteStr) -> Result<i64, ParseIntError> {
+    s.parse()
+}
+
+fn parse_null(s: CompleteStr) -> Result<Null, ParseNullError> {
+    if let Ok(v) = s.to_string().parse::<Value>() {
+        if v == Value::Null {
+            return Ok(Null);
+        }
+    }
+    Err(ParseNullError)
+}
+
+fn parse_bool(s: CompleteStr) -> Result<bool, ParseBoolError> {
+    s.to_string().parse()
 }
 
 fn parse_usize(s: CompleteStr) -> Result<usize, ParseIntError> {
@@ -191,6 +319,36 @@ named!(
 );
 
 named!(
+    parse_compare_null<CompleteStr, Compare<Null>>,
+    do_parse!(
+        comparator: parse_comparator >>
+        opt!(sp) >>
+        value: map_res!(rest, parse_null) >>
+        (Compare { comparator, value })
+    )
+);
+
+named!(
+    parse_compare_bool<CompleteStr, Compare<bool>>,
+    do_parse!(
+        comparator: parse_comparator >>
+        opt!(sp) >>
+        value: map_res!(rest, parse_bool) >>
+        (Compare { comparator, value })
+    )
+);
+
+named!(
+    parse_compare_i64<CompleteStr, Compare<i64>>,
+    do_parse!(
+        comparator: parse_comparator >>
+        opt!(sp) >>
+        value: map_res!(rest, parse_i64) >>
+        (Compare { comparator, value })
+    )
+);
+
+named!(
     parse_compare_u64<CompleteStr, Compare<u64>>,
     do_parse!(
         comparator: parse_comparator >>
@@ -217,6 +375,36 @@ named!(
         opt!(sp) >>
         value: map_res!(rest, parse_string) >>
         (Compare { comparator, value })
+    )
+);
+
+named!(
+    pub parse_selector_i64<CompleteStr, (Compare<i64>, Vec<Selector>)>,
+    do_parse!(
+        identifiers: parse_json_selector >>
+        opt!(sp) >>
+        compare: parse_compare_i64 >>
+        (compare, identifiers)
+    )
+);
+
+named!(
+    pub parse_selector_null<CompleteStr, (Compare<Null>, Vec<Selector>)>,
+    do_parse!(
+        identifiers: parse_json_selector >>
+        opt!(sp) >>
+        compare: parse_compare_null >>
+        (compare, identifiers)
+    )
+);
+
+named!(
+    pub parse_selector_bool<CompleteStr, (Compare<bool>, Vec<Selector>)>,
+    do_parse!(
+        identifiers: parse_json_selector >>
+        opt!(sp) >>
+        compare: parse_compare_bool >>
+        (compare, identifiers)
     )
 );
 

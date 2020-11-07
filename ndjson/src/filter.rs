@@ -17,17 +17,26 @@
 use ndjson_common::{
     error::NdJsonSpatialError,
     json_selector_parser::{
-        parse_selector_f64, parse_selector_string, parse_selector_u64, Compare, Selector,
+        parse_selector_bool, parse_selector_f64, parse_selector_i64, parse_selector_null,
+        parse_selector_string, parse_selector_u64, Compare, ParseValue, Selector,
     },
     ndjson::NdjsonReader,
 };
 use serde_json::Value;
-use std::{io::Write, str::FromStr};
+use std::io::Write;
 
 pub fn ndjson_filter(expression: String) -> Result<(), NdJsonSpatialError> {
     if let Ok((_, (compare, identifiers))) = parse_selector_u64(expression.as_str().into()) {
         write_to_stdout_if_filter_is_true(compare, identifiers)?;
+    } else if let Ok((_, (compare, identifiers))) = parse_selector_i64(expression.as_str().into()) {
+        write_to_stdout_if_filter_is_true(compare, identifiers)?;
     } else if let Ok((_, (compare, identifiers))) = parse_selector_f64(expression.as_str().into()) {
+        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+    } else if let Ok((_, (compare, identifiers))) = parse_selector_bool(expression.as_str().into())
+    {
+        write_to_stdout_if_filter_is_true(compare, identifiers)?;
+    } else if let Ok((_, (compare, identifiers))) = parse_selector_null(expression.as_str().into())
+    {
         write_to_stdout_if_filter_is_true(compare, identifiers)?;
     } else if let Ok((_, (compare, identifiers))) =
         parse_selector_string(expression.as_str().into())
@@ -42,23 +51,13 @@ fn write_to_stdout_if_filter_is_true<T>(
     identifiers: Vec<Selector>,
 ) -> Result<(), NdJsonSpatialError>
 where
-    T: FromStr + PartialOrd,
+    T: ParseValue,
 {
     for value in NdjsonReader::default() {
         let v = value?;
         if let Ok(value) = select_from_json_object(v.clone(), &identifiers) {
-            match value {
-                Value::String(s) => {
-                    if compare.compare(&s) {
-                        writeln!(::std::io::stdout(), "{}", v).expect("unable to write to stdout");
-                    }
-                }
-                Value::Number(n) => {
-                    if compare.compare(&n.to_string()) {
-                        writeln!(::std::io::stdout(), "{}", v).expect("unable to write to stdout");
-                    }
-                }
-                _ => (),
+            if compare.compare(value) {
+                writeln!(::std::io::stdout(), "{}", v).expect("unable to write to stdout");
             }
         }
     }
