@@ -132,10 +132,7 @@ mod tests {
         ndjson_filter("d.a > -40".to_string(), &mut input, &mut output).unwrap();
 
         assert_eq!("{\"a\":1}\n".as_bytes(), output.as_slice());
-    }
 
-    #[test]
-    fn test_filter_u64() {
         let mut input = "{ \"a\": 40250 }\n{ \"a\": -45 }\n".as_bytes();
 
         let mut output = vec![];
@@ -151,5 +148,67 @@ mod tests {
         ndjson_filter("d.a < 10000".to_string(), &mut input, &mut output).unwrap();
 
         assert_eq!("{\"a\":-45}\n".as_bytes(), output.as_slice());
+    }
+
+    #[test]
+    fn test_filter_bool() {
+        let mut input =
+            "{ \"a\": true, \"b\": \"foo\" }\n{ \"a\": false, \"b\": \"bar\" }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a == true".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":true,\"b\":\"foo\"}\n".as_bytes(), output.as_slice());
+
+        let mut input =
+            "{ \"a\": true, \"b\": \"foo\" }\n{ \"a\": false, \"b\": \"bar\" }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a == false".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!(
+            "{\"a\":false,\"b\":\"bar\"}\n".as_bytes(),
+            output.as_slice()
+        );
+    }
+
+    #[test]
+    fn test_filter_float() {
+        let mut input = "{ \"a\": 10.4 }\n{ \"a\": -34.58 }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a < 10.4".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":-34.58}\n".as_bytes(), output.as_slice());
+
+        let mut input = "{\"a\": 24 }\n{ \"a\": 54 }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a > 30.0".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":54}\n".as_bytes(), output.as_slice());
+    }
+
+    #[test]
+    fn test_filter_null() {
+        let mut input = "{ \"a\": null }\n{ \"a\": false }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a == null".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":null}\n".as_bytes(), output.as_slice());
+
+        let mut input = "{ \"a\": null }\n{ \"a\": false }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a != null".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":false}\n".as_bytes(), output.as_slice());
     }
 }

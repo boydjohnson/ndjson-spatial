@@ -26,26 +26,31 @@ use std::{
 };
 pub use yajlish::ndjson_handler::Selector;
 
-pub const NULL_STR: &str = "null";
-#[derive(Debug, PartialEq)]
-pub struct Null;
-#[derive(Debug, PartialEq)]
-pub struct ParseNullError;
+pub type Null = Option<NonNullJsonValue>;
 
-pub enum JsonValue {
+#[derive(Debug, PartialEq)]
+pub enum NonNullJsonValue {
     String(String),
-    Null(Null),
-    I64(i64),
-    U64(u64),
-    F64(f64),
     Bool(bool),
+    I64(i64),
+    Float(f64),
 }
 
-impl PartialOrd for Null {
-    fn partial_cmp(&self, _: &Null) -> Option<Ordering> {
-        Some(Ordering::Equal)
+impl PartialOrd for NonNullJsonValue {
+    fn partial_cmp(&self, other: &NonNullJsonValue) -> Option<Ordering> {
+        use NonNullJsonValue::*;
+        match (self, other) {
+            (String(s), String(o)) => s.partial_cmp(o),
+            (Bool(b), Bool(o)) => b.partial_cmp(o),
+            (I64(i), I64(o)) => i.partial_cmp(o),
+            (Float(f), Float(o)) => f.partial_cmp(o),
+            _ => None,
+        }
     }
 }
+
+#[derive(Debug, PartialEq)]
+pub struct ParseNullError;
 
 #[derive(Debug, PartialEq)]
 pub enum Comparator {
@@ -158,10 +163,18 @@ impl ParseValue for bool {
 impl ParseValue for Null {
     fn parse_value(val: Value) -> Option<Self> {
         match val {
-            Value::String(_) => None,
-            Value::Number(_) => None,
-            Value::Null => Some(Null),
-            Value::Bool(_) => None,
+            Value::String(s) => Some(Some(NonNullJsonValue::String(s))),
+            Value::Number(s) => {
+                if let Some(n) = s.as_i64() {
+                    Some(Some(NonNullJsonValue::I64(n)))
+                } else if let Some(f) = s.as_f64() {
+                    Some(Some(NonNullJsonValue::Float(f)))
+                } else {
+                    Some(None)
+                }
+            }
+            Value::Null => Some(None),
+            Value::Bool(b) => Some(Some(NonNullJsonValue::Bool(b))),
             _ => None,
         }
     }
@@ -178,7 +191,7 @@ fn parse_i64(s: CompleteStr) -> Result<i64, ParseIntError> {
 fn parse_null(s: CompleteStr) -> Result<Null, ParseNullError> {
     if let Ok(v) = s.to_string().parse::<Value>() {
         if v == Value::Null {
-            return Ok(Null);
+            return Ok(None);
         }
     }
     Err(ParseNullError)
