@@ -18,7 +18,7 @@ use ndjson_common::{
     error::NdJsonSpatialError,
     json_selector_parser::{
         parse_selector_bool, parse_selector_f64, parse_selector_i64, parse_selector_null,
-        parse_selector_string, parse_selector_u64, Compare, ParseValue, Selector,
+        parse_selector_string, Compare, ParseValue, Selector,
     },
     ndjson::NdjsonReader,
 };
@@ -33,9 +33,7 @@ pub fn ndjson_filter<R: BufRead, W: Write>(
     let mut read = BufReader::with_capacity(1_000_000, read);
     let mut write = BufWriter::with_capacity(1_000_000, write);
 
-    if let Ok((_, (compare, identifiers))) = parse_selector_u64(expression.as_str().into()) {
-        write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
-    } else if let Ok((_, (compare, identifiers))) = parse_selector_i64(expression.as_str().into()) {
+    if let Ok((_, (compare, identifiers))) = parse_selector_i64(expression.as_str().into()) {
         write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
     } else if let Ok((_, (compare, identifiers))) = parse_selector_f64(expression.as_str().into()) {
         write_to_stdout_if_filter_is_true(compare, identifiers, &mut read, &mut write)?;
@@ -111,4 +109,47 @@ pub fn select_from_json_object(
         }
     }
     Ok(last_value.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_i64() {
+        let mut input = "{ \"a\": 1 }\n{ \"a\": -45 }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a < -40".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":-45}\n".as_bytes(), output.as_slice());
+
+        let mut input = "{ \"a\": 1 }\n{ \"a\": -45 }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a > -40".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":1}\n".as_bytes(), output.as_slice());
+    }
+
+    #[test]
+    fn test_filter_u64() {
+        let mut input = "{ \"a\": 40250 }\n{ \"a\": -45 }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a > 10000".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":40250}\n".as_bytes(), output.as_slice());
+
+        let mut input = "{ \"a\": 40250 }\n{ \"a\": -45 }\n".as_bytes();
+
+        let mut output = vec![];
+
+        ndjson_filter("d.a < 10000".to_string(), &mut input, &mut output).unwrap();
+
+        assert_eq!("{\"a\":-45}\n".as_bytes(), output.as_slice());
+    }
 }
