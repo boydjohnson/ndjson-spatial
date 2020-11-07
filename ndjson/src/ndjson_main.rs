@@ -15,7 +15,11 @@
 */
 
 use clap::{App, Arg, ArgMatches, SubCommand};
-use std::{fs::File, io::Write, process::exit};
+use std::{
+    fs::File,
+    io::{stdin, stdout, Write},
+    process::exit,
+};
 
 mod filter;
 mod from_json;
@@ -37,7 +41,9 @@ fn main() {
             .expect("expression is required")
             .to_string();
 
-        if let Err(err) = filter::ndjson_filter(expression) {
+        if let Err(err) =
+            filter::ndjson_filter(expression, &mut stdin().lock(), &mut stdout().lock())
+        {
             writeln!(::std::io::stderr(), "{:?}", err).expect("Unable to write to stderr");
         }
     } else if let Some("pick-field") = args.subcommand_name() {
