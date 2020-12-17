@@ -147,3 +147,90 @@ impl From<Value> for OrderedValue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_join_simple() {
+        let mut input = "{ \"foo\": 1, \"bar\": 2 }\n".as_bytes();
+
+        let mut file = "{ \"baz\": 3, \"foo\": 1}\n".as_bytes();
+
+        let mut output = vec![];
+
+        join(
+            &mut file,
+            vec![vec![Selector::Identifier("foo".to_owned())]],
+            vec![vec![Selector::Identifier("foo".to_owned())]],
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            "{\"bar\":2,\"baz\":3,\"foo\":1}\n".as_bytes().to_vec()
+        );
+    }
+
+    #[test]
+    fn test_join_multiple_fields() {
+        let mut input = "{ \"foo\": 1, \"bub\": 2, \"bar\": 2 }\n".as_bytes();
+
+        let mut ref_file = "{ \"baz\": 3, \"bub\": 2, \"foo\": 1}\n".as_bytes();
+
+        let mut output = vec![];
+
+        join(
+            &mut ref_file,
+            vec![
+                vec![Selector::Identifier("foo".to_owned())],
+                vec![Selector::Identifier("bub".to_owned())],
+            ],
+            vec![
+                vec![Selector::Identifier("foo".to_owned())],
+                vec![Selector::Identifier("bub".to_owned())],
+            ],
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            "{\"bar\":2,\"baz\":3,\"bub\":2,\"foo\":1}\n"
+                .as_bytes()
+                .to_vec()
+        );
+
+        let mut input = "{\"country\": \"USA\",\"state\":\"California\",\"county\": \"Alameda\", \"color\": null}\n".as_bytes();
+
+        let mut ref_file = "{\"county\": \"Alameda\", \"country\": \"USA\", \"state\": \"California\", \"brand\": [1,2,3,4]}\n".as_bytes();
+
+        let mut output = vec![];
+
+        join(
+            &mut ref_file,
+            vec![
+                vec![Selector::Identifier("country".to_owned())],
+                vec![Selector::Identifier("state".to_owned())],
+                vec![Selector::Identifier("county".to_owned())],
+            ],
+            vec![
+                vec![Selector::Identifier("country".to_owned())],
+                vec![Selector::Identifier("state".to_owned())],
+                vec![Selector::Identifier("county".to_owned())],
+            ],
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            "{\"brand\":[1,2,3,4],\"color\":null,\"country\":\"USA\",\"county\":\"Alameda\",\"state\":\"California\"}\n".as_bytes().to_vec()
+        );
+    }
+}
