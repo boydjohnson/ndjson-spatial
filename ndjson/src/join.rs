@@ -76,15 +76,20 @@ pub fn join<B: BufRead, S: BufRead, O: Write>(
                 let v: Option<OrderedValue> = v.map(|v| v.into());
 
                 if let Some(v) = v {
-                    if let Some(g) = references.get(&v) {
-                        if let (Value::Object(s), Ok(Value::Object(mut o))) = (g, val.clone()) {
-                            for (k, v) in s.into_iter() {
-                                o.insert(k.to_owned(), v.to_owned());
+                    if !matches!(
+                        v,
+                        OrderedValue::Array(_) | OrderedValue::Object(_) | OrderedValue::Null
+                    ) {
+                        if let Some(g) = references.get(&v) {
+                            if let (Value::Object(s), Ok(Value::Object(mut o))) = (g, val.clone()) {
+                                for (k, v) in s.into_iter() {
+                                    o.insert(k.to_owned(), v.to_owned());
+                                }
+
+                                let value = Value::from(o);
+
+                                writeln!(out, "{}", value).expect("Unable to write to stdout");
                             }
-
-                            let value = Value::from(o);
-
-                            writeln!(out, "{}", value).expect("Unable to write to stdout");
                         }
                     }
                 }
