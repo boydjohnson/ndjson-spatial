@@ -15,9 +15,10 @@
 */
 
 use clap::{App, Arg, ArgMatches, SubCommand};
+use ndjson_common::json_selector_parser::{parse_json_selector, Selector};
 use std::{
     fs::File,
-    io::{stdin, stdout, Write},
+    io::{stdin, stdout, BufReader, Write},
     process::exit,
 };
 
@@ -28,7 +29,6 @@ mod pick_field;
 mod to_json;
 
 fn main() {
-    env_logger::init();
     let args = parse_args();
 
     if let Some("filter") = args.subcommand_name() {
@@ -60,8 +60,8 @@ fn main() {
             .subcommand_matches("join")
             .expect("subcommand was correctly tested for");
         let filename = args.value_of("reference").expect("reference is required");
-        let reference_file = match File::open(filename) {
-            Ok(r) => r,
+        let mut reference_file = match File::open(filename) {
+            Ok(r) => BufReader::new(r),
             Err(e) => {
                 writeln!(::std::io::stderr(), "Error opening reference file: {}", e)
                     .expect("Unable to write to stderr");
@@ -69,18 +69,40 @@ fn main() {
             }
         };
 
-        let ref_fields: Vec<String> = args
+        let ref_fields: Vec<Vec<Selector>> = match args
             .values_of("reference-fields")
             .expect("reference-fields is required")
-            .map(|s| s.into())
-            .collect();
-        let stream_fields: Vec<String> = args
+            .map(|s| parse_json_selector(s.into()).map(|(_, result)| result))
+            .collect()
+        {
+            Ok(v) => v,
+            Err(e) => {
+                writeln!(::std::io::stderr(), "Error parsing reference-fields: {}", e)
+                    .expect("Unable to write to stderr");
+                exit(1)
+            }
+        };
+        let stream_fields: Vec<Vec<Selector>> = match args
             .values_of("stream-fields")
             .expect("stream-fields is required")
-            .map(|s| s.into())
-            .collect();
+            .map(|s| parse_json_selector(s.into()).map(|(_, result)| result))
+            .collect()
+        {
+            Ok(v) => v,
+            Err(e) => {
+                writeln!(::std::io::stderr(), "Error parsing stream-fields: {}", e)
+                    .expect("Unable to write to stderr");
+                exit(1)
+            }
+        };
 
-        if let Err(err) = join::join(reference_file, ref_fields, stream_fields) {
+        if let Err(err) = join::join(
+            &mut reference_file,
+            ref_fields,
+            stream_fields,
+            std::io::stdin().lock(),
+            std::io::stdout().lock(),
+        ) {
             writeln!(::std::io::stderr(), "{:?}", err).expect("Error writing to stderr");
         }
     } else if let Some("from-json") = args.subcommand_name() {

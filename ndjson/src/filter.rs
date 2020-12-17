@@ -108,7 +108,7 @@ pub fn select_from_json_object(
             }
         }
     }
-    Ok(last_value.to_owned())
+    Ok(last_value)
 }
 
 #[cfg(test)]

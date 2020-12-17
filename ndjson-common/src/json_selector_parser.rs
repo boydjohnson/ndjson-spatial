@@ -38,7 +38,7 @@ pub enum NonNullJsonValue {
 
 impl PartialOrd for NonNullJsonValue {
     fn partial_cmp(&self, other: &NonNullJsonValue) -> Option<Ordering> {
-        use NonNullJsonValue::*;
+        use NonNullJsonValue::{Bool, Float, String, I64};
         match (self, other) {
             (String(s), String(o)) => s.partial_cmp(o),
             (Bool(b), Bool(o)) => b.partial_cmp(o),
