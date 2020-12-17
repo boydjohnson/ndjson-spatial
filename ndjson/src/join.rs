@@ -32,24 +32,22 @@ pub fn join(
     let mut references = HashMap::new();
 
     for line in reference_reader.lines() {
-        if let Ok(g) = line.unwrap().parse::<GeoJson>() {
-            if let GeoJson::Feature(mut feat) = g {
-                let prop = feat.properties.clone().unwrap();
+        if let Ok(GeoJson::Feature(mut feat)) = line.unwrap().parse::<GeoJson>() {
+            let prop = feat.properties.clone().unwrap();
 
-                let field_values: Vec<String> = reference_fields
-                    .iter()
-                    .filter_map(|f| prop.get(f).cloned())
-                    .filter_map(|v| {
-                        if let serde_json::Value::String(s) = v {
-                            Some(s)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+            let field_values: Vec<String> = reference_fields
+                .iter()
+                .filter_map(|f| prop.get(f).cloned())
+                .filter_map(|v| {
+                    if let serde_json::Value::String(s) = v {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
-                references.insert(field_values, feat.properties.take().unwrap());
-            }
+            references.insert(field_values, feat.properties.take().unwrap());
         }
     }
 

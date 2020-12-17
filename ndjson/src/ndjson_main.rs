@@ -25,7 +25,6 @@ mod filter;
 mod from_json;
 mod join;
 mod pick_field;
-mod select_count;
 mod to_json;
 
 fn main() {
@@ -54,20 +53,6 @@ fn main() {
         let expression = args.value_of("expression").expect("expression is required");
 
         if let Err(e) = pick_field::pick_field(expression) {
-            writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
-        }
-    } else if let Some("select-count") = args.subcommand_name() {
-        let args = args
-            .subcommand_matches("select-count")
-            .expect("subcommand was correctly tested for");
-
-        let expression = args.value_of("expression").expect("expression is required");
-
-        let selector = args.value_of("selector").expect("selector is required");
-
-        let field_name = args.value_of("field-name").expect("field-name is required");
-
-        if let Err(e) = select_count::select_count(expression, selector, field_name) {
             writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
     } else if let Some("join") = args.subcommand_name() {
@@ -112,40 +97,15 @@ fn main() {
 
 fn parse_args<'a>() -> ArgMatches<'a> {
     App::new("ndjson")
-        .about("Tool for working with ndjson geojson features")
+        .about("Tool for working with ndjson")
         .subcommand(
             SubCommand::with_name("pick-field")
                 .about("picks a field from all of the ndjson objects")
                 .arg(
                     Arg::with_name("expression")
                         .required(true)
-                        .help("the expression that yields a field")
-                )
-        )
-        .subcommand(
-            SubCommand::with_name("select-count")
-                .about("Selects an array and counts the number of objects in that array that match a selector")
-                .arg(
-                    Arg::with_name("selector")
-                        .long("selector")
-                        .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("selector for objects within array")
-                )
-                .arg(
-                    Arg::with_name("expression")
-                        .required(true)
-                        .help("expression that determines which array to act on")
-                )
-                .arg(
-                    Arg::with_name("field-name")
-                        .long("field-name")
-                        .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("name for the count statistic")
-                )
+                        .help("the expression that yields a field"),
+                ),
         )
         .subcommand(
             SubCommand::with_name("join")
@@ -189,8 +149,8 @@ fn parse_args<'a>() -> ArgMatches<'a> {
                 .arg(
                     Arg::with_name("expression")
                         .required(true)
-                        .help("selector expression that contains the collection")
-                )
+                        .help("selector expression that contains the collection"),
+                ),
         )
         .get_matches()
 }

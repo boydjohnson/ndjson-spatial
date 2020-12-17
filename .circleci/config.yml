@@ -26,6 +26,10 @@ jobs:
                 name: Check Format 
                 command: |
                     cargo fmt -- --check
+            - run:
+                name: Clippy Lint
+                command: |
+                    cargo clippy -- -D clippy::all
 workflows:
     version: 2
     pr-branch-ci:
