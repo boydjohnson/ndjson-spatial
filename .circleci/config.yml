@@ -1,0 +1,33 @@
+version: 2
+jobs:
+    build:
+        docker:
+            - image: rustlang/rust:nightly
+        environment:
+            RUSTFLAGS: '-D warnings'
+        steps:
+            - run:
+                name: Install Depedencies
+                command: |
+                  apt-get update
+                  apt-get install -yq libgdal-dev
+            - checkout
+            - run:
+                name: Build
+                command: |
+                    rustc --version --verbose
+                    cargo --version --verbose
+                    cargo build
+            - run:
+                name: Test
+                command: |
+                    cargo test
+            - run:
+                name: Check Format 
+                command: |
+                    cargo fmt -- --check
+workflows:
+    version: 2
+    pr-branch-ci:
+        jobs:
+            - build
