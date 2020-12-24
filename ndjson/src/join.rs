@@ -32,7 +32,7 @@ pub fn join<B: BufRead, S: BufRead, O: Write>(
     stream: S,
     mut out: O,
 ) -> Result<(), NdJsonSpatialError> {
-    let references: Vec<BTreeMap<OrderedValue, Value>> = reference_fields
+    let references: Vec<BTreeMap<OrderedValue, Vec<Value>>> = reference_fields
         .into_iter()
         .map(|reference_field| {
             let mut references = BTreeMap::new();
@@ -42,7 +42,12 @@ pub fn join<B: BufRead, S: BufRead, O: Write>(
                     if g.is_object() {
                         match select_from_json_object(g.clone(), &reference_field) {
                             Ok(field_value) => {
-                                references.insert(field_value.into(), g);
+                                let field_value: OrderedValue = field_value.into();
+
+                                references
+                                    .entry(field_value)
+                                    .and_modify(|v: &mut Vec<Value>| v.push(g.clone()))
+                                    .or_insert_with(|| vec![g]);
                             }
                             Err(e) => {
                                 writeln!(
@@ -81,14 +86,18 @@ pub fn join<B: BufRead, S: BufRead, O: Write>(
                         OrderedValue::Array(_) | OrderedValue::Object(_) | OrderedValue::Null
                     ) {
                         if let Some(g) = references.get(&v) {
-                            if let (Value::Object(s), Ok(Value::Object(mut o))) = (g, val.clone()) {
-                                for (k, v) in s.into_iter() {
-                                    o.insert(k.to_owned(), v.to_owned());
+                            for value in g {
+                                if let (Value::Object(s), Ok(Value::Object(mut o))) =
+                                    (value, val.clone())
+                                {
+                                    for (k, v) in s.into_iter() {
+                                        o.insert(k.to_owned(), v.to_owned());
+                                    }
+
+                                    let value = Value::from(o);
+
+                                    writeln!(out, "{}", value).expect("Unable to write to stdout");
                                 }
-
-                                let value = Value::from(o);
-
-                                writeln!(out, "{}", value).expect("Unable to write to stdout");
                             }
                         }
                     }
@@ -172,6 +181,31 @@ mod tests {
         assert_eq!(
             output,
             "{\"bar\":2,\"baz\":3,\"foo\":1}\n".as_bytes().to_vec()
+        );
+    }
+
+    #[test]
+    fn test_join_non_unique() {
+        let mut input = "{ \"foo\": 1, \"bar\": 2}\n".as_bytes();
+
+        let mut ref_file = "{ \"baz\": 3, \"foo\": 1}\n{\"foo\": 1, \"baz\": 2}\n".as_bytes();
+
+        let mut output = vec![];
+
+        join(
+            &mut ref_file,
+            vec![vec![Selector::Identifier("foo".to_owned())]],
+            vec![vec![Selector::Identifier("foo".to_owned())]],
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            "{\"bar\":2,\"baz\":3,\"foo\":1}\n{\"bar\":2,\"baz\":2,\"foo\":1}\n"
+                .as_bytes()
+                .to_vec()
         );
     }
 
