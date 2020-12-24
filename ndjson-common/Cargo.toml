@@ -13,4 +13,4 @@ geo-types = "^0.6"
 geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar" }
 nom = "4.2"
 serde_json = "1.0"
-yajlish = { version = "^0.1", features=["ndjson"] }
+yajlish = { version = "^0.2", features = ["ndjson"] }

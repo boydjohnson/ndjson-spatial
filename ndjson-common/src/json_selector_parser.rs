@@ -238,7 +238,7 @@ named!(
         tag!(".") >>
         identifier: take_while!(is_not_dot_or_array_bracket_or_comparator) >>
         index: opt!(parse_index) >>
-        (Selector::Identifier(identifier.to_string()), index.map(Selector::Index))
+        (Selector::Identifier(format!("\"{}\"", identifier)), index.map(Selector::Index))
     )
 );
 
@@ -486,7 +486,7 @@ mod tests {
             parse_dot_plus_identifier(".properties.AREA".into()),
             Ok((
                 ".AREA".into(),
-                (Selector::Identifier("properties".to_string()), None)
+                (Selector::Identifier("\"properties\"".to_string()), None)
             ))
         );
 
@@ -494,7 +494,7 @@ mod tests {
             parse_dot_plus_identifier(".properties.contains[5]".into()),
             Ok((
                 ".contains[5]".into(),
-                (Selector::Identifier("properties".to_string()), None)
+                (Selector::Identifier("\"properties\"".to_string()), None)
             ))
         );
 
@@ -503,7 +503,7 @@ mod tests {
             Ok((
                 "".into(),
                 (
-                    Selector::Identifier("contains".to_string()),
+                    Selector::Identifier("\"contains\"".to_string()),
                     Some(Selector::Index(5))
                 )
             ))
@@ -522,8 +522,8 @@ mod tests {
             Ok((
                 ">".into(),
                 vec![
-                    (Selector::Identifier("properties".to_string()), None),
-                    (Selector::Identifier("AREA".to_string()), None)
+                    (Selector::Identifier("\"properties\"".to_string()), None),
+                    (Selector::Identifier("\"AREA\"".to_string()), None)
                 ]
             ))
         );
@@ -536,8 +536,8 @@ mod tests {
             Ok((
                 "".into(),
                 vec![
-                    Selector::Identifier("properties".to_string()),
-                    Selector::Identifier("AREA".to_string())
+                    Selector::Identifier("\"properties\"".to_string()),
+                    Selector::Identifier("\"AREA\"".to_string())
                 ]
             ))
         )
@@ -622,8 +622,8 @@ mod tests {
                         value: 5.5
                     },
                     vec![
-                        Selector::Identifier("properties".to_string()),
-                        Selector::Identifier("AREA".to_string())
+                        Selector::Identifier("\"properties\"".to_string()),
+                        Selector::Identifier("\"AREA\"".to_string())
                     ]
                 )
             ))
@@ -640,8 +640,8 @@ mod tests {
                     },
                     vec![
                         Selector::Index(5),
-                        Selector::Identifier("manager".to_string()),
-                        Selector::Identifier("pay".to_string())
+                        Selector::Identifier("\"manager\"".to_string()),
+                        Selector::Identifier("\"pay\"".to_string())
                     ]
                 )
             ))

@@ -79,13 +79,19 @@ pub fn select_from_json_object(
     for identifier in identifiers {
         match identifier {
             Selector::Identifier(ident) => {
+                let ident = ident
+                    .strip_prefix('"')
+                    .map(|s| s.strip_suffix('"'))
+                    .flatten()
+                    .unwrap_or_else(|| ident.as_str());
+
                 if let Value::Array(_) = last_value {
                     return Err(NdJsonSpatialError::Error(format!(
                         "Unable to get attribute {} on array",
                         ident
                     )));
                 } else if let Value::Object(value_map) = last_value {
-                    last_value = value_map.get(ident.as_str()).cloned().ok_or_else(|| {
+                    last_value = value_map.get(ident).cloned().ok_or_else(|| {
                         NdJsonSpatialError::Error(format!("Object has no attribute {}", ident))
                     })?;
                 } else {
