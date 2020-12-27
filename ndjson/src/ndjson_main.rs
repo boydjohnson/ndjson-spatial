@@ -14,6 +14,8 @@
 * limitations under the License.
 */
 
+#![feature(move_ref_pattern)]
+
 use clap::{App, Arg, ArgMatches, SubCommand};
 use ndjson_common::json_selector_parser::{parse_json_selector, Selector};
 use std::{

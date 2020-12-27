@@ -14,6 +14,7 @@
 * limitations under the License.
 */
 
+#[cfg(feature = "spatial")]
 pub mod common;
 pub mod error;
 pub mod from;

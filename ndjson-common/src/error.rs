@@ -19,6 +19,7 @@ pub enum NdJsonSpatialError {
     Error(String),
 }
 
+#[cfg(feature = "spatial")]
 impl From<geos::Error> for NdJsonSpatialError {
     fn from(other: geos::Error) -> Self {
         NdJsonSpatialError::Error(format!("Geos Error: {}", other))

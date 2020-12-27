@@ -11,25 +11,26 @@ jobs:
                 command: |
                   apt-get update
                   apt-get install -yq libgdal-dev
+                  rustup toolchain add nightly-2020-09-27
             - checkout
             - run:
                 name: Build
                 command: |
                     rustc --version --verbose
-                    cargo --version --verbose
-                    cargo build
+                    cargo +nightly-2020-09-27 --version --verbose
+                    cargo +nightly-2020-09-27 build
             - run:
                 name: Test
                 command: |
-                    cargo test
+                    cargo +nightly-2020-09-27 test
             - run:
                 name: Check Format 
                 command: |
-                    cargo fmt -- --check
+                    cargo +nightly-2020-09-27 fmt -- --check
             - run:
                 name: Clippy Lint
                 command: |
-                    cargo clippy -- -D clippy::all
+                    cargo +nightly-2020-09-27 clippy -- -D clippy::all
 workflows:
     version: 2
     pr-branch-ci:
