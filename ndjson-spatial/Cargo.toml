@@ -16,6 +16,6 @@ geos = { version = "7.0.0", features = ["json", "geo"] }
 geo-types = "^0.6"
 geojson = { version = "^0.19", features = ["geo-types"] }
 geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar" }
-ndjson-common = { path = "../ndjson-common" }
+ndjson-common = { path = "../ndjson-common", features = ["spatial"] }
 rstar = "^0.8"
 serde_json = "^1.0"

@@ -15,6 +15,7 @@
  */
 
 use crate::error::NdJsonSpatialError;
+#[cfg(feature = "spatial")]
 use geojson::GeoJson;
 use serde_json::Value;
 use std::io::{stderr, stdin, BufRead, BufReader, Stdin, Write};
@@ -22,10 +23,12 @@ use std::io::{stderr, stdin, BufRead, BufReader, Stdin, Write};
 /// A struct for reading ndjson geojson from a `BufRead` source,
 /// most usually `BufReader<Stdin>` which is provided by `NdjsonGeojsonReader::default()`.
 /// Often used as the `Iterator` impl for which `Self::Item = geojson::GeoJson`.
+#[cfg(feature = "spatial")]
 pub struct NdJsonGeojsonReader<IN> {
     std_in: IN,
 }
 
+#[cfg(feature = "spatial")]
 impl<IN> NdJsonGeojsonReader<IN>
 where
     IN: BufRead,
@@ -35,6 +38,7 @@ where
     }
 }
 
+#[cfg(feature = "spatial")]
 impl<'a> Default for NdJsonGeojsonReader<BufReader<Stdin>> {
     fn default() -> Self {
         let s = stdin();
@@ -42,6 +46,7 @@ impl<'a> Default for NdJsonGeojsonReader<BufReader<Stdin>> {
     }
 }
 
+#[cfg(feature = "spatial")]
 impl<IN> Iterator for NdJsonGeojsonReader<IN>
 where
     IN: BufRead,
