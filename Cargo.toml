@@ -1,3 +1,5 @@
+cargo-features = ["named-profiles"]
+
 [workspace]
 members = [
     "ndjson",
@@ -5,6 +7,7 @@ members = [
     "ndjson-spatial"
 ]
 
-[profile.release]
+[profile.release-ndjson]
+inherits = "release"
 lto = true
 codegen-units = 1
