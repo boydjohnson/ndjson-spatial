@@ -2,6 +2,25 @@ This repo contains some Rust cli tools for working with new-line delimited geojs
 
 These tools are currently pre-release. There will be releases with builds for linux and macos.
 
+# Build
+
+This repo requires a nightly compiler before 2020-09-28 exclusive.
+
+To build
+```
+rustup default nightly-2020-09-27
+cargo build --release
+```
+
+for lto (optimizations for code speed and size) on `ndjson`
+
+```
+cd ndjson
+cargo build -Z unstable-options --profile=release-ndjson
+
+ls -lh ../target/release-ndjson/ndjson
+```
+
 ## Current
 
 ## ndjson-spatial
