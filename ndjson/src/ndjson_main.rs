@@ -47,12 +47,18 @@ fn main() {
         {
             writeln!(::std::io::stderr(), "{:?}", err).expect("Unable to write to stderr");
         }
-    } else if let Some("pick-field") = args.subcommand_name() {
-        let args = args
-            .subcommand_matches("pick-field")
-            .expect("subcommand was correctly tested for");
-
-        let expression = args.value_of("expression").expect("expression is required");
+    } else if let Some(args) = args.subcommand_matches("pick-field") {
+        let expression = match parse_json_selector(
+            args.value_of("expression")
+                .expect("expression is required")
+                .into(),
+        ) {
+            Ok(s) => s.1,
+            Err(e) => {
+                println!("Error parsing expression: {}", e);
+                exit(1)
+            }
+        };
 
         if let Err(e) = pick_field::pick_field(expression) {
             writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
