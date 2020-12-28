@@ -20,7 +20,7 @@ use clap::{App, Arg, ArgMatches, SubCommand};
 use ndjson_common::json_selector_parser::{parse_json_selector, Selector};
 use std::{
     fs::File,
-    io::{stdin, stdout, BufReader, Write},
+    io::{stdin, stdout, BufReader, BufWriter, Write},
     process::exit,
 };
 
@@ -47,14 +47,24 @@ fn main() {
         {
             writeln!(::std::io::stderr(), "{:?}", err).expect("Unable to write to stderr");
         }
-    } else if let Some("pick-field") = args.subcommand_name() {
-        let args = args
-            .subcommand_matches("pick-field")
-            .expect("subcommand was correctly tested for");
+    } else if let Some(args) = args.subcommand_matches("pick-field") {
+        let expression = match parse_json_selector(
+            args.value_of("expression")
+                .expect("expression is required")
+                .into(),
+        ) {
+            Ok(s) => s.1,
+            Err(e) => {
+                println!("Error parsing expression: {}", e);
+                exit(1)
+            }
+        };
 
-        let expression = args.value_of("expression").expect("expression is required");
-
-        if let Err(e) = pick_field::pick_field(expression) {
+        if let Err(e) = pick_field::pick_field(
+            expression,
+            &mut BufReader::with_capacity(1_000_000, &mut stdin().lock()),
+            BufWriter::with_capacity(1_000_000, stdout().lock()),
+        ) {
             writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
     } else if let Some("join") = args.subcommand_name() {
