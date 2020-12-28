@@ -20,7 +20,7 @@ use clap::{App, Arg, ArgMatches, SubCommand};
 use ndjson_common::json_selector_parser::{parse_json_selector, Selector};
 use std::{
     fs::File,
-    io::{stdin, stdout, BufReader, Write},
+    io::{stdin, stdout, BufReader, BufWriter, Write},
     process::exit,
 };
 
@@ -60,7 +60,11 @@ fn main() {
             }
         };
 
-        if let Err(e) = pick_field::pick_field(expression) {
+        if let Err(e) = pick_field::pick_field(
+            expression,
+            &mut BufReader::with_capacity(1_000_000, &mut stdin().lock()),
+            BufWriter::with_capacity(1_000_000, stdout().lock()),
+        ) {
             writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
     } else if let Some("join") = args.subcommand_name() {
