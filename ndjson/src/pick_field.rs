@@ -42,3 +42,24 @@ pub fn pick_field<I: BufRead, O: Write>(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pick_field() {
+        let mut input = "{\"foo\":1}\n{\"foo\":2}\n{\"foo\":5}\n".as_bytes();
+
+        let mut output = vec![];
+
+        pick_field(
+            vec![Selector::Identifier("foo".to_owned())],
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(output, "1\n2\n5\n".as_bytes().to_owned());
+    }
+}
