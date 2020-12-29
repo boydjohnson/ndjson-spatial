@@ -14,7 +14,7 @@
 * limitations under the License.
 */
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NdJsonSpatialError {
     Error(String),
 }

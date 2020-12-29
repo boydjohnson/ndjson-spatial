@@ -16,6 +16,7 @@
 
 #![feature(move_ref_pattern)]
 
+use aggregate::{aggregate, Aggregation};
 use clap::{App, Arg, ArgMatches, SubCommand};
 use ndjson_common::json_selector_parser::{parse_json_selector, Selector};
 use std::{
@@ -24,6 +25,7 @@ use std::{
     process::exit,
 };
 
+mod aggregate;
 mod filter;
 mod from_json;
 mod join;
@@ -126,6 +128,64 @@ fn main() {
         if let Err(e) = from_json::from_json(expression) {
             writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
+    } else if let Some(args) = args.subcommand_matches("agg") {
+        let aggregator_selector = args
+            .values_of("aggregator")
+            .map(|mut v| {
+                (
+                    v.next().unwrap(),
+                    parse_json_selector(v.next().unwrap().into()).map(|v| v.1),
+                )
+            })
+            .map(|(first, second)| match (first, second) {
+                ("count", Ok(selector)) => Aggregation::Count(selector),
+                ("min", Ok(selector)) => Aggregation::Min(selector),
+                ("max", Ok(selector)) => Aggregation::Max(selector),
+                ("sum", Ok(selector)) => Aggregation::Sum(selector),
+                (&_, Err(e)) => {
+                    writeln!(
+                        std::io::stderr(),
+                        "Error parsing aggregation selector: {}",
+                        e
+                    )
+                    .expect("Unable to write to stderr");
+                    exit(1);
+                }
+                (a, Ok(_)) => {
+                    writeln!(
+                        std::io::stderr(),
+                        "--agg must be one of 'count', 'sum', 'min', 'max', not: {}",
+                        a
+                    )
+                    .expect("Unable to write to stderr");
+                    exit(1);
+                }
+            })
+            .expect("aggregator is required");
+
+        let group_by_selector = match parse_json_selector(
+            args.value_of("group-by")
+                .expect("group-by is required")
+                .into(),
+        )
+        .map(|f| f.1)
+        {
+            Ok(s) => s,
+            Err(e) => {
+                writeln!(std::io::stderr(), "Error parsing group-by selector: {}", e)
+                    .expect("Unable to write to stderr");
+                exit(1)
+            }
+        };
+
+        if let Err(e) = aggregate(
+            aggregator_selector,
+            group_by_selector,
+            &mut std::io::stdin().lock(),
+            std::io::stdout(),
+        ) {
+            writeln!(std::io::stderr(), "Error: {:?}", e).expect("Unable to write to stderr");
+        }
     }
 }
 
@@ -184,6 +244,30 @@ fn parse_args<'a>() -> ArgMatches<'a> {
                     Arg::with_name("expression")
                         .required(true)
                         .help("selector expression that contains the collection"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("agg")
+                .about("Aggregatation commands on a grouped-by key")
+                .arg(
+                    Arg::with_name("group-by")
+                        .short("g")
+                        .long("group-by")
+                        .help("group by this field")
+                        .takes_value(true)
+                        .number_of_values(1)
+                        .value_names(&["selector"])
+                        .required(true),
+                )
+                .arg(
+                    Arg::with_name("aggregator")
+                        .short("a")
+                        .long("agg")
+                        .takes_value(true)
+                        .required(true)
+                        .number_of_values(2)
+                        .value_names(&["aggregator", "selector"])
+                        .help("aggregation function along with selector. e.g. -a sum d.salary"),
                 ),
         )
         .get_matches()
