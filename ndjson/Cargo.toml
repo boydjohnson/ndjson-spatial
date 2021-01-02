@@ -3,6 +3,8 @@ name = "ndjson"
 version = "0.1.0"
 authors = ["Boyd Johnson <johnson.boyd@gmail.com>"]
 edition = "2018"
+license = "Apache-2.0"
+description = "Command line tool for creating, filtering, processing ndjson"
 
 [[bin]]
 path = "src/ndjson_main.rs"

@@ -17,7 +17,10 @@
 #![feature(move_ref_pattern)]
 
 use aggregate::{aggregate, Aggregation};
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{
+    app_from_crate, crate_authors, crate_description, crate_name, crate_version, Arg, ArgMatches,
+    SubCommand,
+};
 use ndjson_common::json_selector_parser::{parse_json_selector, Selector};
 use std::{
     fs::File,
@@ -190,8 +193,7 @@ fn main() {
 }
 
 fn parse_args<'a>() -> ArgMatches<'a> {
-    App::new("ndjson")
-        .about("Tool for working with ndjson")
+    app_from_crate!("../Cargo.toml")
         .subcommand(
             SubCommand::with_name("pick-field")
                 .about("picks a field from all of the ndjson objects")
