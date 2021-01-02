@@ -126,10 +126,10 @@ pub enum OrderedNumber {
 
 impl From<Number> for OrderedNumber {
     fn from(other: Number) -> Self {
-        if let Some(v) = other.as_i64() {
-            OrderedNumber::NegInt(v)
-        } else if let Some(v) = other.as_u64() {
+        if let Some(v) = other.as_u64() {
             OrderedNumber::PosInt(v)
+        } else if let Some(v) = other.as_i64() {
+            OrderedNumber::NegInt(v)
         } else if let Some(v) = other.as_f64() {
             OrderedNumber::Float(OrderedFloat(v))
         } else {
@@ -266,5 +266,20 @@ mod tests {
             output,
             "{\"brand\":[1,2,3,4],\"color\":null,\"country\":\"USA\",\"county\":\"Alameda\",\"state\":\"California\"}\n".as_bytes().to_vec()
         );
+    }
+
+    #[test]
+    fn test_ordered_number() {
+        let val: OrderedNumber = serde_json::Number::from_f64(4.5).unwrap().into();
+
+        assert_eq!(val, OrderedNumber::Float(OrderedFloat(4.5)));
+
+        let val: OrderedNumber = serde_json::Number::from(-56).into();
+
+        assert_eq!(val, OrderedNumber::NegInt(-56));
+
+        let val: OrderedNumber = serde_json::Number::from(56).into();
+
+        assert_eq!(val, OrderedNumber::PosInt(56));
     }
 }

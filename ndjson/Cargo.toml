@@ -11,6 +11,7 @@ name = "ndjson"
 [dependencies]
 clap = "2.33"
 geojson = "^0.19"
+itertools = "^0.10"
 ndjson-common = { path = "../ndjson-common" }
 ordered-float = "^2.0"
 serde_json = "1.0"
