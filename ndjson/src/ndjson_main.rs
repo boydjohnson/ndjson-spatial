@@ -181,8 +181,8 @@ fn main() {
         if let Err(e) = aggregate(
             aggregator_selector,
             group_by_selector,
-            &mut std::io::stdin().lock(),
-            std::io::stdout(),
+            &mut BufReader::with_capacity(500_000, &mut stdin().lock()),
+            BufWriter::with_capacity(1_000_000, stdout().lock()),
         ) {
             writeln!(std::io::stderr(), "Error: {:?}", e).expect("Unable to write to stderr");
         }
