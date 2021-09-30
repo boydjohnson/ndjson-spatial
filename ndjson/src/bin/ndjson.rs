@@ -14,10 +14,13 @@
 * limitations under the License.
 */
 
-use aggregate::{aggregate, Aggregation};
 use clap::{
     app_from_crate, crate_authors, crate_description, crate_name, crate_version, Arg, ArgMatches,
     SubCommand,
+};
+use ndjson::{
+    aggregate::{aggregate, Aggregation},
+    filter, from_json, join, pick_field,
 };
 use ndjson_common::json_selector_parser::{parse_json_selector, Selector};
 use std::{
@@ -25,13 +28,6 @@ use std::{
     io::{stdin, stdout, BufReader, BufWriter, Write},
     process::exit,
 };
-
-mod aggregate;
-mod filter;
-mod from_json;
-mod join;
-mod pick_field;
-mod to_json;
 
 fn main() {
     let args = parse_args();
