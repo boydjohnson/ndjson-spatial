@@ -22,31 +22,31 @@ pub fn calculate_bounding_box_if_not_exists(feat: &mut Feature) {
     if feat.bbox.is_none() {
         let bbox = match feat.geometry.as_ref().map(|g| &g.value) {
             Some(Value::Point(p)) => {
-                let point = conversion::create_geo_point(&p);
+                let point = conversion::create_geo_point(p);
                 Some(vec![point.lng(), point.lat(), point.lng(), point.lat()])
             }
             Some(Value::MultiPoint(mp)) => {
-                let geo_multi_point = conversion::create_geo_multi_point(&mp);
+                let geo_multi_point = conversion::create_geo_multi_point(mp);
                 let bounding_rect = geo_multi_point.bounding_rect();
                 do_calc_bounding_box(bounding_rect)
             }
             Some(Value::LineString(l)) => {
-                let geo_linestring = conversion::create_geo_line_string(&l);
+                let geo_linestring = conversion::create_geo_line_string(l);
                 let bounding_rect = geo_linestring.bounding_rect();
                 do_calc_bounding_box(bounding_rect)
             }
             Some(Value::MultiLineString(ml)) => {
-                let geo_multi_linestring = conversion::create_geo_multi_line_string(&ml);
+                let geo_multi_linestring = conversion::create_geo_multi_line_string(ml);
                 let bounding_rect = geo_multi_linestring.bounding_rect();
                 do_calc_bounding_box(bounding_rect)
             }
             Some(Value::Polygon(p)) => {
-                let geo_polygon = conversion::create_geo_polygon(&p);
+                let geo_polygon = conversion::create_geo_polygon(p);
                 let bounding_rect = geo_polygon.bounding_rect();
                 do_calc_bounding_box(bounding_rect)
             }
             Some(Value::MultiPolygon(mp)) => {
-                let geo_multi_polygon = conversion::create_geo_multi_polygon(&mp);
+                let geo_multi_polygon = conversion::create_geo_multi_polygon(mp);
                 let bounding_rect = geo_multi_polygon.bounding_rect();
                 do_calc_bounding_box(bounding_rect)
             }
@@ -57,11 +57,7 @@ pub fn calculate_bounding_box_if_not_exists(feat: &mut Feature) {
 }
 
 fn do_calc_bounding_box(bounding_rect: Option<Rect<f64>>) -> Option<Vec<f64>> {
-    if let Some(b) = bounding_rect {
-        Some(vec![b.min().x, b.max().x, b.min().y, b.max().y])
-    } else {
-        None
-    }
+    bounding_rect.map(|b| vec![b.min().x, b.max().x, b.min().y, b.max().y])
 }
 
 pub fn to_geo_json(geo_geometry: &geo::Geometry<f64>) -> geojson::Value {

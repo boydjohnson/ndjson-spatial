@@ -52,8 +52,8 @@ where
     OUT: Write,
 {
     pub fn area(&mut self, field_name: String, bbox: bool) -> Result<(), NdJsonSpatialError> {
-        for geo in NdJsonGeojsonReader::new(&mut self.std_in) {
-            if let Ok(geojson::GeoJson::Feature(mut feat)) = geo {
+        for geo in NdJsonGeojsonReader::new(&mut self.std_in).flatten() {
+            if let geojson::GeoJson::Feature(mut feat) = geo {
                 let area = match feat.geometry.as_ref() {
                     Some(geometry) => match geometry.value {
                         Value::MultiPolygon(_) | Value::Polygon(_) => {
