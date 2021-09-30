@@ -125,6 +125,17 @@ fn main() {
         if let Err(e) = from_json::from_json(expression) {
             writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
+    } else if let Some(args) = args.subcommand_matches("from-csv") {
+        let delimiter = args
+            .value_of("delimiter")
+            .map(|s| s.chars().next())
+            .flatten()
+            .map(|d| d as u8)
+            .unwrap_or(b',');
+
+        if let Err(e) = ndjson::from_csv::from_csv(delimiter) {
+            writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
+        }
     } else if let Some(args) = args.subcommand_matches("agg") {
         let aggregator_selector = args
             .values_of("aggregator")
@@ -231,6 +242,16 @@ fn parse_args<'a>() -> ArgMatches<'a> {
                     Arg::with_name("expression")
                         .required(true)
                         .help("The json selector filter expression"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("from-csv")
+                .about("Converts csv to ndjson")
+                .arg(
+                    Arg::with_name("delimiter")
+                        .takes_value(true)
+                        .number_of_values(1)
+                        .help("The delimiter of the csv"),
                 ),
         )
         .subcommand(
