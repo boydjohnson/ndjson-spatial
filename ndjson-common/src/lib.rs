@@ -18,5 +18,6 @@
 pub mod common;
 pub mod error;
 pub mod from;
+pub mod infer_json;
 pub mod json_selector_parser;
 pub mod ndjson;
