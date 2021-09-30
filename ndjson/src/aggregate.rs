@@ -83,7 +83,7 @@ pub fn aggregate<I: BufRead, O: Write>(
                     .join("_");
 
                 let number: Result<f64, _> = group
-                    .map(|el| select_from_json_object(el?, &sel))
+                    .map(|el| select_from_json_object(el?, sel))
                     .filter_map_ok(|v| {
                         if let Value::Number(n) = v {
                             n.as_f64()
@@ -108,7 +108,7 @@ pub fn aggregate<I: BufRead, O: Write>(
                     .join("_");
 
                 let min: Result<Option<OrderedNumber>, NdJsonSpatialError> = group
-                    .map(|el| select_from_json_object(el?, &sel))
+                    .map(|el| select_from_json_object(el?, sel))
                     .filter_map_ok(|v| {
                         if let Value::Number(n) = v {
                             let num: OrderedNumber = n.into();
@@ -157,7 +157,7 @@ pub fn aggregate<I: BufRead, O: Write>(
                     .join("_");
 
                 let max: Result<Option<OrderedNumber>, NdJsonSpatialError> = group
-                    .map(|el| select_from_json_object(el?, &sel))
+                    .map(|el| select_from_json_object(el?, sel))
                     .filter_map_ok(|v| {
                         if let Value::Number(n) = v {
                             Some(n.into())

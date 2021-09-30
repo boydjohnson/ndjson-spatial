@@ -37,26 +37,24 @@ pub fn join<B: BufRead, S: BufRead, O: Write>(
         .map(|reference_field| {
             let mut references = BTreeMap::new();
 
-            for value in NdjsonReader::new(&mut reference_reader) {
-                if let Ok(g) = value {
-                    if g.is_object() {
-                        match select_from_json_object(g.clone(), &reference_field) {
-                            Ok(field_value) => {
-                                let field_value: OrderedValue = field_value.into();
+            for g in NdjsonReader::new(&mut reference_reader).flatten() {
+                if g.is_object() {
+                    match select_from_json_object(g.clone(), &reference_field) {
+                        Ok(field_value) => {
+                            let field_value: OrderedValue = field_value.into();
 
-                                references
-                                    .entry(field_value)
-                                    .and_modify(|v: &mut Vec<Value>| v.push(g.clone()))
-                                    .or_insert_with(|| vec![g]);
-                            }
-                            Err(e) => {
-                                writeln!(
-                                    std::io::stderr(),
-                                    "Unable to select from reference object: {:?}",
-                                    e
-                                )
-                                .expect("Unable to write to stderr");
-                            }
+                            references
+                                .entry(field_value)
+                                .and_modify(|v: &mut Vec<Value>| v.push(g.clone()))
+                                .or_insert_with(|| vec![g]);
+                        }
+                        Err(e) => {
+                            writeln!(
+                                std::io::stderr(),
+                                "Unable to select from reference object: {:?}",
+                                e
+                            )
+                            .expect("Unable to write to stderr");
                         }
                     }
                 }

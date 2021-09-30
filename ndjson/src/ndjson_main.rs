@@ -14,8 +14,6 @@
 * limitations under the License.
 */
 
-#![feature(move_ref_pattern)]
-
 use aggregate::{aggregate, Aggregation};
 use clap::{
     app_from_crate, crate_authors, crate_description, crate_name, crate_version, Arg, ArgMatches,
