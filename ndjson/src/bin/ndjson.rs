@@ -22,7 +22,10 @@ use ndjson::{
     aggregate::{aggregate, Aggregation},
     filter, from_json, join, pick_field,
 };
-use ndjson_common::json_selector_parser::{parse_json_selector, Selector};
+use ndjson_common::{
+    error::NdJsonSpatialError,
+    json_selector_parser::{parse_json_selector, Selector},
+};
 use std::{
     fs::File,
     io::{stdin, stdout, BufReader, BufWriter, Write},
@@ -194,6 +197,57 @@ fn main() {
         ) {
             writeln!(std::io::stderr(), "Error: {:?}", e).expect("Unable to write to stderr");
         }
+    } else if let Some(args) = args.subcommand_matches("sort") {
+        if let Some(fields) = args.values_of("fields") {
+            let selectors = match fields
+                .map(|f| {
+                    if let Some((selector, sort_order)) = f.split_once(',') {
+                        match parse_json_selector(selector.into()) {
+                            Ok((_, selectors)) => Ok((selectors, parse_sort_order(sort_order))),
+                            Err(e) => Err(NdJsonSpatialError::Error(format!(
+                                "Failed to parse selector: {}: {}",
+                                selector, e
+                            ))),
+                        }
+                    } else {
+                        match parse_json_selector(f.into()) {
+                            Ok((_, selectors)) => Ok((selectors, true)),
+                            Err(e) => Err(NdJsonSpatialError::Error(format!(
+                                "Failed to parse selector: {}: {}",
+                                f, e
+                            ))),
+                        }
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(selectors) => selectors,
+                Err(e) => {
+                    eprintln!("{:?}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let input = BufReader::with_capacity(2000, std::io::stdin());
+
+            if let Err(e) = ndjson::sort::sort(input, &mut std::io::stdout(), selectors) {
+                eprintln!("{:?}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+fn parse_sort_order(s: &str) -> bool {
+    match s {
+        "asc" => true,
+        "a" => true,
+        "desc" => false,
+        "d" => false,
+        a => {
+            eprintln!("expected 'asc', 'a', 'desc' or 'd' found {}", a);
+            std::process::exit(1);
+        }
     }
 }
 
@@ -270,7 +324,7 @@ fn parse_args<'a>() -> ArgMatches<'a> {
                     Arg::with_name("group-by")
                         .short("g")
                         .long("group-by")
-                        .help("group by this field")
+                        .help("Selector for field to group by")
                         .takes_value(true)
                         .number_of_values(1)
                         .value_names(&["selector"])
@@ -286,6 +340,20 @@ fn parse_args<'a>() -> ArgMatches<'a> {
                         .value_names(&["aggregator", "selector"])
                         .help("aggregation function along with selector. e.g. -a sum d.salary"),
                 ),
+        )
+        .subcommand(
+            SubCommand::with_name("sort")
+            .about("Sort by ndjson fields")
+            .arg(
+                Arg::with_name("fields")
+                    .short("f")
+                    .long("fields")
+                    .help("Selector for fields to sort by. e.g. -f d.property_value or -f d.property_value:d")
+                    .takes_value(true)
+                    .multiple(true)
+                    .value_names(&["selector"])
+                    .required(true)
+            )
         )
         .get_matches()
 }
