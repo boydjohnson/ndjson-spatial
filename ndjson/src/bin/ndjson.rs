@@ -201,7 +201,7 @@ fn main() {
         if let Some(fields) = args.values_of("fields") {
             let selectors = match fields
                 .map(|f| {
-                    if let Some((selector, sort_order)) = f.split_once(',') {
+                    if let Some((selector, sort_order)) = f.split_once(':') {
                         match parse_json_selector(selector.into()) {
                             Ok((_, selectors)) => Ok((selectors, parse_sort_order(sort_order))),
                             Err(e) => Err(NdJsonSpatialError::Error(format!(
