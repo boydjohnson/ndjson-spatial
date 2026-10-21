@@ -4,11 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nom = "7.0"
-lalrpop-util = { version = "0.19", features = ["lexer"] }
+lalrpop-util = { version = "0.23", features = ["lexer"] }
 ordered-float = "2.8"
 serde_json = "1.0"
 yajlish-ndjson = "0.1.0"
 
 [build-dependencies]
-lalrpop = { version = "0.19", features = ["lexer"] }
+lalrpop = { version = "0.23", features = ["lexer"] }
