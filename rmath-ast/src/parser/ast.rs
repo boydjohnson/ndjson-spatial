@@ -26,41 +26,10 @@ pub enum Term {
 pub enum Expr {
     Term(Term),
     Op(Box<Expr>, BinaryOp, Box<Expr>),
-    UnaryFunction(UnaryFunction, Box<Expr>),
+    /// A function call. The name is resolved against a
+    /// [`FunctionRegistry`](crate::registry::FunctionRegistry) after parsing.
+    Call(String, Vec<Expr>),
     Negate(Box<Expr>),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum UnaryFunction {
-    Abs,
-    Sqrt,
-    Floor,
-    Ceil,
-    Trunc,
-    Cos,
-    Sin,
-    Tan,
-    ACos,
-    ASin,
-    ATan,
-    Cosh,
-    Sinh,
-    Tanh,
-    ACosh,
-    ASinh,
-    ATanh,
-    Log,
-    Log10,
-    Exp,
-    ToUpper,
-    ToLower,
-    Capitalize,
-    ToString,
-    IsFloat,
-    IsFloatNan,
-    IsNull,
-    ToFloat,
-    ToInt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

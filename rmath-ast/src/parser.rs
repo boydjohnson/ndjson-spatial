@@ -60,7 +60,7 @@ pub(crate) fn unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::math::{ExprParser, FloatParser, IntParser, NumParser, PosIntParser, TermParser};
-    use crate::parser::ast::{BinaryOp, Expr, Num, Term, UnaryFunction, Value};
+    use crate::parser::ast::{BinaryOp, Expr, Num, Term, Value};
     use ordered_float::OrderedFloat;
     use yajlish_ndjson::Selector;
 
@@ -184,35 +184,88 @@ mod tests {
             .is_err());
     }
 
+    fn call(name: &str, args: Vec<Box<Expr>>) -> Box<Expr> {
+        Box::new(Expr::Call(
+            name.into(),
+            args.into_iter().map(|a| *a).collect(),
+        ))
+    }
+
     #[test]
-    fn test_expr_with_unary_functions() {
+    fn test_expr_with_function_calls() {
         assert_eq!(
             ExprParser::new().parse("toint(3.4)"),
-            Ok(Box::new(Expr::UnaryFunction(
-                UnaryFunction::ToInt,
-                Box::new(Expr::Term(Term::Value(Value::Num(Num::Float(
-                    OrderedFloat(3.4)
-                )))))
-            )))
+            Ok(call("toint", vec![num(Num::Float(OrderedFloat(3.4)))]))
         );
 
         assert_eq!(
             ExprParser::new().parse("ceil(4.5) + floor(4.5)"),
             Ok(Box::new(Expr::Op(
-                Box::new(Expr::UnaryFunction(
-                    UnaryFunction::Ceil,
-                    Box::new(Expr::Term(Term::Value(Value::Num(Num::Float(
-                        OrderedFloat(4.5)
-                    )))))
-                )),
+                call("ceil", vec![num(Num::Float(OrderedFloat(4.5)))]),
                 BinaryOp::Add,
-                Box::new(Expr::UnaryFunction(
-                    UnaryFunction::Floor,
-                    Box::new(Expr::Term(Term::Value(Value::Num(Num::Float(
-                        OrderedFloat(4.5)
-                    )))))
-                ))
+                call("floor", vec![num(Num::Float(OrderedFloat(4.5)))])
             )))
+        );
+    }
+
+    #[test]
+    fn test_calls_take_any_number_of_arguments() {
+        assert_eq!(ExprParser::new().parse("now()"), Ok(call("now", vec![])));
+        assert_eq!(
+            ExprParser::new().parse("round(d.x, 2)"),
+            Ok(call("round", vec![sel(&["x"]), num(Num::PosInt(2))]))
+        );
+        assert_eq!(
+            ExprParser::new().parse("f(1, g(d.a + 1), \"s\")"),
+            Ok(call(
+                "f",
+                vec![
+                    num(Num::PosInt(1)),
+                    call(
+                        "g",
+                        vec![Box::new(Expr::Op(
+                            sel(&["a"]),
+                            BinaryOp::Add,
+                            num(Num::PosInt(1))
+                        ))]
+                    ),
+                    string("s"),
+                ]
+            ))
+        );
+        // Names are parsed without knowing which functions exist.
+        assert_eq!(
+            ExprParser::new().parse("geom_type2(d)"),
+            Ok(Box::new(Expr::Call(
+                "geom_type2".into(),
+                vec![Expr::Term(Term::Selector(vec![]))]
+            )))
+        );
+        assert!(ExprParser::new().parse("f(,)").is_err());
+        assert!(ExprParser::new().parse("f(1 2)").is_err());
+        assert!(ExprParser::new().parse("f").is_err());
+    }
+
+    #[test]
+    fn test_keywords_are_not_function_names() {
+        assert_eq!(
+            ExprParser::new().parse("true"),
+            Ok(Box::new(Expr::Term(Term::Value(Value::Bool(true)))))
+        );
+        assert_eq!(
+            ExprParser::new().parse("Null"),
+            Ok(Box::new(Expr::Term(Term::Value(Value::Null))))
+        );
+        assert_eq!(
+            ExprParser::new().parse("trueish(null)"),
+            Ok(call(
+                "trueish",
+                vec![Box::new(Expr::Term(Term::Value(Value::Null)))]
+            ))
+        );
+        assert_eq!(
+            ExprParser::new().parse("data(d.a)"),
+            Ok(call("data", vec![sel(&["a"])]))
         );
     }
 
@@ -236,10 +289,7 @@ mod tests {
     fn test_identifier_stops_at_punctuation() {
         assert_eq!(
             ExprParser::new().parse("abs(d.amount)"),
-            Ok(Box::new(Expr::UnaryFunction(
-                UnaryFunction::Abs,
-                sel(&["amount"])
-            )))
+            Ok(call("abs", vec![sel(&["amount"])]))
         );
         assert_eq!(
             ExprParser::new().parse("(d.a)*d.b"),

@@ -1,4 +1,4 @@
-use crate::parser::ast::{BinaryOp, Expr, Num, Term, Value, UnaryFunction};
+use crate::parser::ast::{BinaryOp, Expr, Num, Term, Value};
 use crate::parser::{negate, negate_num, unescape};
 use yajlish_ndjson::Selector as JsonSelector;
 use lalrpop_util::ParseError;
@@ -43,19 +43,21 @@ pub Num: Num = {
     },
 };
 
-Bool: bool = r"true|false" => {
-    match <> {
-        "true" => true,
-        "false" => false,
-        _ => panic!("Was not true or false"),
-    }
+// Keywords are literal tokens, which the lexer prefers over the
+// `FunctionName` regex when both match the same text.
+Bool: bool = {
+    "true" => true,
+    "false" => false,
 };
 
 // Double-quoted with backslash escapes; non-greedy so `"a" + "b"` is two
 // strings.
 StringP: String = <s:r#""([^"\\]|\\.)*""#> => unescape(&s[1..s.len() - 1]);
 
-Null = r"[nN]ull";
+Null = {
+    "null",
+    "Null",
+};
 
 pub ValueToken: Value = {
     <n: UnsignedNum> => Value::Num(n),
@@ -96,8 +98,23 @@ pub Term: Box<Expr> = {
     <n:ValueToken> => Box::new(Expr::Term(Term::Value(n))),
     <s:Selector> => Box::new(Expr::Term(Term::Selector(s))),
     "(" <e:Expr> ")" => e,
-    <u: UnaryFunction> "(" <e: Expr> ")" => Box::new(Expr::UnaryFunction(u, e)),
+    <name:FunctionName> "(" <args:Comma<Expr>> ")" => {
+        Box::new(Expr::Call(name, args.into_iter().map(|a| *a).collect()))
+    },
 }
+
+FunctionName: String = r"[A-Za-z_][A-Za-z0-9_]*" => <>.to_string();
+
+// Zero or more `T`s separated by commas.
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
 
 ExprMac<NextTier, Op>: Box<Expr> = {
     NextTier,
@@ -136,38 +153,4 @@ Tier3Op: BinaryOp = {
 Tier3: Box<Expr> = {
     Term,
     <s:Tier3> <o:Tier3Op> <t:Term> => Box::new(Expr::Op(s, o, t)),
-};
-
-// Each name is its own token so the lexer's longest match picks `log10`
-// over `log` and `cosh` over `cos`.
-UnaryFunction: UnaryFunction = {
-    "abs" => UnaryFunction::Abs,
-    "sqrt" => UnaryFunction::Sqrt,
-    "floor" => UnaryFunction::Floor,
-    "ceil" => UnaryFunction::Ceil,
-    "trunc" => UnaryFunction::Trunc,
-    "cos" => UnaryFunction::Cos,
-    "sin" => UnaryFunction::Sin,
-    "tan" => UnaryFunction::Tan,
-    "acos" => UnaryFunction::ACos,
-    "asin" => UnaryFunction::ASin,
-    "atan" => UnaryFunction::ATan,
-    "cosh" => UnaryFunction::Cosh,
-    "sinh" => UnaryFunction::Sinh,
-    "tanh" => UnaryFunction::Tanh,
-    "acosh" => UnaryFunction::ACosh,
-    "asinh" => UnaryFunction::ASinh,
-    "atanh" => UnaryFunction::ATanh,
-    "log" => UnaryFunction::Log,
-    "log10" => UnaryFunction::Log10,
-    "exp" => UnaryFunction::Exp,
-    "toupper" => UnaryFunction::ToUpper,
-    "tolower" => UnaryFunction::ToLower,
-    "capitalize" => UnaryFunction::Capitalize,
-    "tostring" => UnaryFunction::ToString,
-    "isfloat" => UnaryFunction::IsFloat,
-    "isfloatnan" => UnaryFunction::IsFloatNan,
-    "isnull" => UnaryFunction::IsNull,
-    "tofloat" => UnaryFunction::ToFloat,
-    "toint" => UnaryFunction::ToInt,
 };

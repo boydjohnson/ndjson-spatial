@@ -173,10 +173,15 @@ Findings from reading `rmath-ast` (`src/math.lalrpop`, `src/parser/ast.rs`):
    `3`, `-5` and fails to parse. Drop the sign from the token and add unary
    minus to the grammar.
 5. **Float lexing.** Doesn't accept `1.5e3`, `.5`, or `1E5`.
-6. **Functions.** `UnaryFunction` is a closed, single-argument enum matched
-   by one regex, so nothing outside the crate can add functions. Replace with `Expr::Call(String, Vec<Expr>)` resolved against the registry
-   after parsing. (`UnaryFunction` also has both `Ceiling` and `Ceil`.)
-7. **Missing pieces.** comparisons, boolean ops, `in`, `is null`, n-ary calls,
+6. **Functions.** ~~`UnaryFunction` is a closed, single-argument enum matched
+   by one regex, so nothing outside the crate can add functions.~~ Done:
+   calls parse to `Expr::Call(String, Vec<Expr>)` with any number of
+   arguments, and `FunctionRegistry::resolve`/`compile` binds them (checking
+   arity) into a `CompiledExpr` for evaluation. The existing functions are
+   registered as built-ins (`rmath-ast/src/builtins.rs`); other crates add
+   theirs with `FunctionRegistry::register`. Only scalar functions exist so
+   far; aggregates will be a second `FunctionKind`.
+7. **Missing pieces.** comparisons, boolean ops, `in`, `is null`,
    select list, `as`, `*`/`except`, and an evaluator.
 8. **Toolchain.** ~~lalrpop 0.19 → current; nom 7 is listed but unused by the
    grammar.~~ Done: lalrpop 0.23, and the unused nom dependency is dropped.

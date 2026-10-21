@@ -1,11 +1,12 @@
-//! Evaluate a parsed [`Expr`] against one JSON record.
+//! Evaluate a [`CompiledExpr`](crate::registry::CompiledExpr) against one JSON record.
 //!
 //! Semantics (see `plans/02-select-and-expressions.md`):
 //!
 //! - A selector whose path is missing, or that walks through a value of the
 //!   wrong type, evaluates to `null`.
 //! - `null` propagates: arithmetic and functions with a `null` argument
-//!   return `null` (except `isnull`).
+//!   return `null` (except functions registered with
+//!   [`Function::sees_null`](crate::registry::Function::sees_null), e.g. `isnull`).
 //! - Integer `+ - *` stay integers when the result fits in `i64`/`u64`, and
 //!   become floats otherwise. `/` always yields a float. `**` yields an
 //!   integer when both sides are integers, the exponent is non-negative, and
@@ -15,7 +16,7 @@
 //!   [`EvalError`]. Callers decide whether that becomes `null` or aborts.
 //!   JSON has no NaN or infinity, so results that aren't finite are errors.
 
-use crate::parser::ast::{BinaryOp, Expr, Num, Term, UnaryFunction, Value as Literal};
+use crate::parser::ast::{BinaryOp, Num, Value as Literal};
 use serde_json::{Number, Value};
 use std::fmt;
 use yajlish_ndjson::Selector;
@@ -69,21 +70,6 @@ impl fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
-impl Expr {
-    /// Evaluate this expression against `record` (the `d` in selectors).
-    pub fn eval(&self, record: &Value) -> Result<Value, EvalError> {
-        match self {
-            Expr::Term(Term::Value(lit)) => Ok(literal_to_json(lit)),
-            Expr::Term(Term::Selector(path)) => {
-                Ok(select(record, path).cloned().unwrap_or(Value::Null))
-            }
-            Expr::Negate(inner) => negate(inner.eval(record)?),
-            Expr::Op(left, op, right) => binary(*op, left.eval(record)?, right.eval(record)?),
-            Expr::UnaryFunction(func, arg) => unary_function(func, arg.eval(record)?),
-        }
-    }
-}
-
 /// Walk `path` into `record`. `None` when a key or index is missing or the
 /// path goes through a scalar.
 pub fn select<'a>(record: &'a Value, path: &[Selector]) -> Option<&'a Value> {
@@ -95,7 +81,7 @@ pub fn select<'a>(record: &'a Value, path: &[Selector]) -> Option<&'a Value> {
         })
 }
 
-fn literal_to_json(lit: &Literal) -> Value {
+pub(crate) fn literal_to_json(lit: &Literal) -> Value {
     match lit {
         Literal::Bool(b) => Value::Bool(*b),
         Literal::String(s) => Value::String(s.clone()),
@@ -104,7 +90,7 @@ fn literal_to_json(lit: &Literal) -> Value {
     }
 }
 
-fn type_name(v: &Value) -> &'static str {
+pub(crate) fn type_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
         Value::Bool(_) => "bool",
@@ -115,7 +101,7 @@ fn type_name(v: &Value) -> &'static str {
     }
 }
 
-fn json_to_num(n: &Number) -> Num {
+pub(crate) fn json_to_num(n: &Number) -> Num {
     if let Some(u) = n.as_u64() {
         Num::PosInt(u)
     } else if let Some(i) = n.as_i64() {
@@ -125,7 +111,7 @@ fn json_to_num(n: &Number) -> Num {
     }
 }
 
-fn num_to_json(n: Num) -> Option<Value> {
+pub(crate) fn num_to_json(n: Num) -> Option<Value> {
     match n {
         Num::PosInt(u) => Some(Value::from(u)),
         Num::Int(i) => Some(Value::from(i)),
@@ -133,14 +119,14 @@ fn num_to_json(n: Num) -> Option<Value> {
     }
 }
 
-fn float_result(op: &'static str, f: f64) -> Result<Value, EvalError> {
+pub(crate) fn float_result(op: &'static str, f: f64) -> Result<Value, EvalError> {
     Number::from_f64(f)
         .map(Value::Number)
         .ok_or(EvalError::NonFinite { op })
 }
 
 /// An integer result if it fits in `u64`/`i64`, else a float.
-fn int_result(op: &'static str, i: i128) -> Result<Value, EvalError> {
+pub(crate) fn int_result(op: &'static str, i: i128) -> Result<Value, EvalError> {
     if let Ok(u) = u64::try_from(i) {
         Ok(Value::from(u))
     } else if let Ok(s) = i64::try_from(i) {
@@ -150,7 +136,7 @@ fn int_result(op: &'static str, i: i128) -> Result<Value, EvalError> {
     }
 }
 
-fn as_int(n: Num) -> Option<i128> {
+pub(crate) fn as_int(n: Num) -> Option<i128> {
     match n {
         Num::PosInt(u) => Some(i128::from(u)),
         Num::Int(i) => Some(i128::from(i)),
@@ -158,7 +144,7 @@ fn as_int(n: Num) -> Option<i128> {
     }
 }
 
-fn as_f64(n: Num) -> f64 {
+pub(crate) fn as_f64(n: Num) -> f64 {
     match n {
         Num::PosInt(u) => u as f64,
         Num::Int(i) => i as f64,
@@ -166,7 +152,7 @@ fn as_f64(n: Num) -> f64 {
     }
 }
 
-fn negate(v: Value) -> Result<Value, EvalError> {
+pub(crate) fn negate(v: Value) -> Result<Value, EvalError> {
     match &v {
         Value::Null => Ok(Value::Null),
         Value::Number(n) => match json_to_num(n) {
@@ -191,7 +177,7 @@ fn binary_op_name(op: BinaryOp) -> &'static str {
     }
 }
 
-fn binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, EvalError> {
+pub(crate) fn binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, EvalError> {
     let name = binary_op_name(op);
     match (&left, &right) {
         (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
@@ -255,230 +241,16 @@ fn numeric(op: BinaryOp, a: Num, b: Num) -> Result<Value, EvalError> {
     }
 }
 
-fn function_name(func: &UnaryFunction) -> &'static str {
-    use UnaryFunction::*;
-    match func {
-        Abs => "abs",
-        Sqrt => "sqrt",
-        Floor => "floor",
-        Ceil => "ceil",
-        Trunc => "trunc",
-        Cos => "cos",
-        Sin => "sin",
-        Tan => "tan",
-        ACos => "acos",
-        ASin => "asin",
-        ATan => "atan",
-        Cosh => "cosh",
-        Sinh => "sinh",
-        Tanh => "tanh",
-        ACosh => "acosh",
-        ASinh => "asinh",
-        ATanh => "atanh",
-        Log => "log",
-        Log10 => "log10",
-        Exp => "exp",
-        ToUpper => "toupper",
-        ToLower => "tolower",
-        Capitalize => "capitalize",
-        ToString => "tostring",
-        IsFloat => "isfloat",
-        IsFloatNan => "isfloatnan",
-        IsNull => "isnull",
-        ToFloat => "tofloat",
-        ToInt => "toint",
-    }
-}
-
-fn unary_function(func: &UnaryFunction, arg: Value) -> Result<Value, EvalError> {
-    use UnaryFunction::*;
-    let name = function_name(func);
-
-    // Predicates see null; everything else propagates it.
-    match func {
-        IsNull => return Ok(Value::Bool(arg.is_null())),
-        IsFloat => return Ok(Value::Bool(parse_float(&arg).is_some())),
-        IsFloatNan => {
-            return Ok(Value::Bool(
-                parse_float(&arg).map(f64::is_nan).unwrap_or(false),
-            ))
-        }
-        _ => {}
-    }
-    if arg.is_null() {
-        return Ok(Value::Null);
-    }
-
-    let wrong_type = |v: &Value| EvalError::Type {
-        op: name,
-        left: type_name(v),
-        right: None,
-    };
-
-    match func {
-        ToUpper | ToLower | Capitalize => match &arg {
-            Value::String(s) => Ok(Value::String(match func {
-                ToUpper => s.to_uppercase(),
-                ToLower => s.to_lowercase(),
-                _ => capitalize(s),
-            })),
-            other => Err(wrong_type(other)),
-        },
-        ToString => Ok(match arg {
-            Value::String(s) => Value::String(s),
-            other => Value::String(other.to_string()),
-        }),
-        ToFloat => match parse_float(&arg) {
-            Some(f) => float_result(name, f),
-            None => Err(conversion_error(name, &arg)),
-        },
-        ToInt => to_int(&arg),
-        _ => {
-            let n = match &arg {
-                Value::Number(n) => json_to_num(n),
-                other => return Err(wrong_type(other)),
-            };
-            math_function(func, name, n)
-        }
-    }
-}
-
-fn math_function(func: &UnaryFunction, name: &'static str, n: Num) -> Result<Value, EvalError> {
-    use UnaryFunction::*;
-    match func {
-        Abs => match n {
-            Num::Float(f) => float_result(name, f.0.abs()),
-            n => int_result(name, as_int(n).expect("integer").abs()),
-        },
-        // Rounding an integer is the identity; rounding a float yields an
-        // integer when it fits, so results can be used as grouping keys.
-        Floor | Ceil | Trunc => match n {
-            Num::Float(f) => {
-                let r = match func {
-                    Floor => f.0.floor(),
-                    Ceil => f.0.ceil(),
-                    _ => f.0.trunc(),
-                };
-                float_to_int_if_exact(name, r)
-            }
-            n => num_to_json(n).ok_or(EvalError::NonFinite { op: name }),
-        },
-        _ => {
-            let x = as_f64(n);
-            let r = match func {
-                Sqrt => x.sqrt(),
-                Cos => x.cos(),
-                Sin => x.sin(),
-                Tan => x.tan(),
-                ACos => x.acos(),
-                ASin => x.asin(),
-                ATan => x.atan(),
-                Cosh => x.cosh(),
-                Sinh => x.sinh(),
-                Tanh => x.tanh(),
-                ACosh => x.acosh(),
-                ASinh => x.asinh(),
-                ATanh => x.atanh(),
-                Log => x.ln(),
-                Log10 => x.log10(),
-                Exp => x.exp(),
-                _ => unreachable!("non-math functions are handled by the caller"),
-            };
-            float_result(name, r)
-        }
-    }
-}
-
-/// Whether an integer-valued float lies in the i64 ∪ u64 range
-/// (`[-2^63, 2^64)`), so `as i128` is exact and the result fits.
-fn in_int_range(f: f64) -> bool {
-    (-9_223_372_036_854_775_808.0..18_446_744_073_709_551_616.0).contains(&f)
-}
-
-/// `r` must already be integer-valued.
-fn float_to_int_if_exact(op: &'static str, r: f64) -> Result<Value, EvalError> {
-    if in_int_range(r) {
-        int_result(op, r as i128)
-    } else {
-        float_result(op, r)
-    }
-}
-
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
-}
-
-/// Numbers, and strings that parse as numbers (surrounding whitespace
-/// allowed; `"NaN"`/`"inf"` parse to their float values).
-fn parse_float(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) => Some(as_f64(json_to_num(n))),
-        Value::String(s) => s.trim().parse::<f64>().ok(),
-        _ => None,
-    }
-}
-
-fn conversion_error(func: &'static str, v: &Value) -> EvalError {
-    match v {
-        Value::String(s) => EvalError::Parse {
-            func,
-            input: s.clone(),
-        },
-        other => EvalError::Type {
-            op: func,
-            left: type_name(other),
-            right: None,
-        },
-    }
-}
-
-/// Integers pass through; floats and numeric strings truncate toward zero.
-fn to_int(v: &Value) -> Result<Value, EvalError> {
-    const NAME: &str = "toint";
-    match v {
-        Value::Number(n) => match json_to_num(n) {
-            Num::Float(f) => truncate_to_int(f.0),
-            n => num_to_json(n).ok_or(EvalError::OutOfRange { func: NAME }),
-        },
-        Value::String(s) => {
-            let t = s.trim();
-            if let Ok(u) = t.parse::<u64>() {
-                Ok(Value::from(u))
-            } else if let Ok(i) = t.parse::<i64>() {
-                Ok(Value::from(i))
-            } else if let Ok(f) = t.parse::<f64>() {
-                truncate_to_int(f)
-            } else {
-                Err(conversion_error(NAME, v))
-            }
-        }
-        other => Err(conversion_error(NAME, other)),
-    }
-}
-
-fn truncate_to_int(f: f64) -> Result<Value, EvalError> {
-    let t = f.trunc();
-    if in_int_range(t) {
-        int_result("toint", t as i128)
-    } else {
-        Err(EvalError::OutOfRange { func: "toint" })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::ExprParser;
+    use crate::registry::FunctionRegistry;
     use serde_json::json;
 
     fn eval(expr: &str, record: Value) -> Result<Value, EvalError> {
-        ExprParser::new()
-            .parse(expr)
-            .unwrap_or_else(|e| panic!("failed to parse {:?}: {:?}", expr, e))
+        FunctionRegistry::default()
+            .compile(expr)
+            .unwrap_or_else(|e| panic!("failed to compile {:?}: {}", expr, e))
             .eval(&record)
     }
 
