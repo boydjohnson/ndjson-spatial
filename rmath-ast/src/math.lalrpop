@@ -1,0 +1,173 @@
+use crate::parser::ast::{BinaryOp, Expr, Num, Term, Value, UnaryFunction};
+use crate::parser::{negate, negate_num, unescape};
+use yajlish_ndjson::Selector as JsonSelector;
+use lalrpop_util::ParseError;
+use ordered_float::OrderedFloat;
+
+grammar;
+
+// Numeric literals are unsigned; a leading `-` is unary minus (see `Unary`),
+// so `3-5` lexes as `3`, `-`, `5`.
+pub Float: f64 = r"[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?|[0-9]+[eE][-+]?[0-9]+" =>? {
+    <>.parse::<f64>()
+        .map_err(|_| ParseError::User {
+            error: "f64 failed to parse"
+        })
+};
+
+pub PosInt: u64 = r"[0-9]+" =>? {
+    <>.parse::<u64>()
+        .map_err(|_| ParseError::User {
+            error: "u64 failed to parse"
+        })
+};
+
+// A negative integer literal on its own (not reachable from `Expr`, where
+// `-` is unary minus).
+pub Int: i64 = "-" <p:PosInt> =>? match negate_num(Num::PosInt(p)) {
+    Num::Int(i) => Ok(i),
+    _ => Err(ParseError::User { error: "i64 failed to parse" }),
+};
+
+UnsignedNum: Num = {
+    <f:Float> => Num::Float(OrderedFloat(f)),
+    <p:PosInt> => Num::PosInt(p),
+};
+
+// A possibly-signed numeric literal on its own (not reachable from `Expr`).
+pub Num: Num = {
+    UnsignedNum,
+    "-" <n:UnsignedNum> =>? match n {
+        Num::PosInt(p) if p > 1 << 63 => Err(ParseError::User { error: "i64 failed to parse" }),
+        n => Ok(negate_num(n)),
+    },
+};
+
+Bool: bool = r"true|false" => {
+    match <> {
+        "true" => true,
+        "false" => false,
+        _ => panic!("Was not true or false"),
+    }
+};
+
+// Double-quoted with backslash escapes; non-greedy so `"a" + "b"` is two
+// strings.
+StringP: String = r#""([^"\\]|\\.)*""# => unescape(&<>[1..<>.len() - 1]);
+
+Null = r"[nN]ull";
+
+pub ValueToken: Value = {
+    <n: UnsignedNum> => Value::Num(n),
+    <s: StringP> => Value::String(s),
+    <b: Bool> => Value::Bool(b),
+    <Null> => Value::Null,
+}
+
+// `.name` (letters, digits, `_`) or `."any key"` for keys with other
+// characters.
+pub IdentifierToken: JsonSelector = {
+    r"\.[A-Za-z0-9_]+" => JsonSelector::Identifier(Into::into(&<>[1..])),
+    r#"\."([^"\\]|\\.)*""# => JsonSelector::Identifier(unescape(&<>[2..<>.len() - 1])),
+    r#"\["([^"\\]|\\.)*"\]"# => JsonSelector::Identifier(unescape(&<>[2..<>.len() - 2])),
+};
+
+pub ArrayToken: JsonSelector = {
+    r"\[[0-9]+\]" =>? <>.trim_end_matches(']')
+        .trim_start_matches('[')
+        .parse::<usize>()
+        .map_err(|_| ParseError::User {
+        error: "Index too big",
+    }).map(JsonSelector::Index)
+}
+
+EitherToken: JsonSelector = {
+    <i:IdentifierToken> => i,
+    <a:ArrayToken> => a,
+}
+
+pub Selector: Vec<JsonSelector> = {
+    "d" <r: EitherToken *> => {
+        r
+    },
+}
+
+pub Term: Box<Expr> = {
+    <n:ValueToken> => Box::new(Expr::Term(Term::Value(n))),
+    <s:Selector> => Box::new(Expr::Term(Term::Selector(s))),
+    "(" <e:Expr> ")" => e,
+    <u: UnaryFunction> "(" <e: Expr> ")" => Box::new(Expr::UnaryFunction(u, e)),
+}
+
+ExprMac<NextTier, Op>: Box<Expr> = {
+    NextTier,
+    <e:ExprMac<NextTier, Op>> <o:Op> <n:NextTier> => Box::new(Expr::Op(e, o, n)),
+}
+
+pub Expr: Box<Expr> = {
+    ExprMac<Tier2, Tier1Op>,
+};
+
+Tier1Op: BinaryOp = {
+   "+" => BinaryOp::Add,
+   "-" => BinaryOp::Sub,
+};
+
+Tier2: Box<Expr> = {
+    ExprMac<Unary, Tier2Op>,
+};
+
+Tier2Op: BinaryOp = {
+    "*" => BinaryOp::Mul,
+    "/" => BinaryOp::Div,
+};
+
+// Unary minus binds looser than `**`, as in Python: `-2 ** 2 == -4`.
+// Negating a numeric literal folds into the literal.
+Unary: Box<Expr> = {
+    Tier3,
+    "-" <u:Unary> => negate(u),
+};
+
+Tier3Op: BinaryOp = {
+    "**" => BinaryOp::Pow,
+};
+
+Tier3: Box<Expr> = {
+    Term,
+    <s:Tier3> <o:Tier3Op> <t:Term> => Box::new(Expr::Op(s, o, t)),
+};
+
+// Each name is its own token so the lexer's longest match picks `log10`
+// over `log` and `cosh` over `cos`.
+UnaryFunction: UnaryFunction = {
+    "abs" => UnaryFunction::Abs,
+    "sqrt" => UnaryFunction::Sqrt,
+    "floor" => UnaryFunction::Floor,
+    "ceil" => UnaryFunction::Ceil,
+    "trunc" => UnaryFunction::Trunc,
+    "cos" => UnaryFunction::Cos,
+    "sin" => UnaryFunction::Sin,
+    "tan" => UnaryFunction::Tan,
+    "acos" => UnaryFunction::ACos,
+    "asin" => UnaryFunction::ASin,
+    "atan" => UnaryFunction::ATan,
+    "cosh" => UnaryFunction::Cosh,
+    "sinh" => UnaryFunction::Sinh,
+    "tanh" => UnaryFunction::Tanh,
+    "acosh" => UnaryFunction::ACosh,
+    "asinh" => UnaryFunction::ASinh,
+    "atanh" => UnaryFunction::ATanh,
+    "log" => UnaryFunction::Log,
+    "log10" => UnaryFunction::Log10,
+    "exp" => UnaryFunction::Exp,
+    "toupper" => UnaryFunction::ToUpper,
+    "tolower" => UnaryFunction::ToLower,
+    "capitalize" => UnaryFunction::Capitalize,
+    "tostring" => UnaryFunction::ToString,
+    "isfloat" => UnaryFunction::IsFloat,
+    "isfloatnan" => UnaryFunction::IsFloatNan,
+    "isnull" => UnaryFunction::IsNull,
+    "tofloat" => UnaryFunction::ToFloat,
+    "toint" => UnaryFunction::ToInt,
+};

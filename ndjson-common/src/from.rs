@@ -16,10 +16,8 @@
 
 use crate::error::NdJsonSpatialError;
 use std::io::{BufRead, BufReader, BufWriter, StdoutLock, Write};
-use yajlish::{
-    ndjson_handler::{NdJsonHandler, Selector},
-    Parser,
-};
+use yajlish::Parser;
+use yajlish_ndjson::{NdJsonHandler, Selector};
 
 pub fn generic_split<R: BufRead>(
     read: &mut R,

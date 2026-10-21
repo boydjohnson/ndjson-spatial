@@ -54,7 +54,7 @@ pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialErr
                     .value
                 {
                     let nearest = tree.nearest_neighbor(&[
-                        *point_vec.get(0)
+                        *point_vec.first()
                             .ok_or_else(|| NdJsonSpatialError::Error("GeoJson point has less than 2 coordinates".into()))?, 
                         *point_vec.get(1)
                                 .ok_or_else(|| NdJsonSpatialError::Error("GeoJson point has less than 2 coordinates".into()))?])
@@ -62,7 +62,7 @@ pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialErr
                         NdJsonSpatialError::Error("Missing nearest neighbor for point. Did reference file contain geojson points".to_string())
                     )?;
                     let distance = nearest.distance_2(&[
-                        *point_vec.get(0).ok_or_else(|| {
+                        *point_vec.first().ok_or_else(|| {
                             NdJsonSpatialError::Error(
                                 "GeoJson point has less than 2 coordinates".into(),
                             )
@@ -84,7 +84,7 @@ pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialErr
                         p.insert("distance".to_string(), serde_json::Value::Number(number))
                     });
 
-                    writeln!(::std::io::stdout(), "{}", feature.to_string())
+                    writeln!(::std::io::stdout(), "{}", feature)
                         .expect("Unable to write to stdout");
                 }
             }

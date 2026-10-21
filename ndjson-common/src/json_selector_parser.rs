@@ -24,7 +24,7 @@ use std::{
     num::{ParseFloatError, ParseIntError},
     str::{FromStr, ParseBoolError},
 };
-pub use yajlish::ndjson_handler::Selector;
+pub use yajlish_ndjson::Selector;
 
 pub type Null = Option<NonNullJsonValue>;
 
@@ -309,7 +309,7 @@ named!(
 );
 
 fn is_digit(c: char) -> bool {
-    c.is_digit(10)
+    c.is_ascii_digit()
 }
 
 fn is_digit_or_space(c: char) -> bool {

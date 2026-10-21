@@ -15,10 +15,9 @@
 */
 
 use crate::common::geojson_to_gdal;
-use gdal::spatial_ref::{CoordTransform, SpatialRef};
-use geo::Geometry;
+use gdal::spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef};
 use geojson_rstar::Feature;
-use ndjson_common::{common::to_geo_json, error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
+use ndjson_common::{error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
 use std::{
     convert::TryInto,
     io::{BufRead, Write},
@@ -62,13 +61,29 @@ pub fn transform<R: BufRead, W: Write>(
                 .transform_inplace(&crs_trans)
                 .map_err(|e| NdJsonSpatialError::Error(format!("Error tranforming crs: {}", e)))?;
 
-            let geo_geometry: Geometry<f64> = gdal_geometry.into();
+            let geometry = gdal_geometry
+                .json()
+                .map_err(|e| {
+                    NdJsonSpatialError::Error(format!("Error converting from Gdal: {}", e))
+                })?
+                .parse::<geojson::GeoJson>()
+                .map_err(|e| {
+                    NdJsonSpatialError::Error(format!("Error reading Gdal geojson: {:?}", e))
+                })?;
+
+            let geometry = match geometry {
+                geojson::GeoJson::Geometry(g) => g,
+                other => {
+                    return Err(NdJsonSpatialError::Error(format!(
+                        "Expected a geometry from Gdal, got: {}",
+                        other
+                    )))
+                }
+            };
 
             let mut feat: geojson::Feature = feat.into();
 
-            let geo_json_value = to_geo_json(&geo_geometry);
-
-            feat.geometry = Some(geojson::Geometry::new(geo_json_value));
+            feat.geometry = Some(geometry);
 
             let feat: Feature = feat.try_into().map_err(|e| {
                 NdJsonSpatialError::Error(format!("Error converting from Geojson: {:?}", e))
@@ -76,7 +91,7 @@ pub fn transform<R: BufRead, W: Write>(
 
             let feat: geojson::Feature = feat.into();
 
-            if let Err(e) = writeln!(writer, "{}", feat.to_string()) {
+            if let Err(e) = writeln!(writer, "{}", feat) {
                 writeln!(std::io::stderr(), "{}", e).expect("Unable to write to stderr");
             }
         }
@@ -97,12 +112,17 @@ fn create_transform(
         CrsSpecification::Proj(ref proj4) => SpatialRef::from_proj4(proj4),
     };
 
-    let f = f.map_err(|e| {
+    let mut f = f.map_err(|e| {
         NdJsonSpatialError::Error(format!("Error creating 'from' spatial ref: {}", e))
     })?;
-    let t = t.map_err(|e| {
+    let mut t = t.map_err(|e| {
         NdJsonSpatialError::Error(format!("Error creating 'to' spatial_ref: {}", e))
     })?;
+
+    // GDAL 3 defaults to the authority's axis order (lat/lon for EPSG:4326);
+    // GeoJSON is always x/y, so keep the traditional GIS order.
+    f.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
+    t.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
 
     CoordTransform::new(&f, &t)
         .map_err(|e| NdJsonSpatialError::Error(format!("Error creating tranform: {}", e)))

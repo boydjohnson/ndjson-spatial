@@ -113,7 +113,7 @@ where
                     calculate_bounding_box_if_not_exists(&mut feat);
                 }
 
-                writeln!(self.std_out, "{}", feat.to_string()).expect("Unable to write to stdout");
+                writeln!(self.std_out, "{}", feat).expect("Unable to write to stdout");
             }
         }
         Ok(())

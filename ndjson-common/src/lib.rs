@@ -14,6 +14,10 @@
 * limitations under the License.
 */
 
+// nom 4's macros expand with trailing semicolons, which newer rustc warns about.
+// unknown_lints keeps older toolchains, which lack this lint, quiet.
+#![allow(unknown_lints, semicolon_in_expressions_from_non_local_macros)]
+
 #[cfg(feature = "spatial")]
 pub mod common;
 pub mod error;

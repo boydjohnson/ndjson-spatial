@@ -21,6 +21,7 @@ use ndjson_common::{
 use ordered_float::OrderedFloat;
 use serde_json::{Number, Value};
 use std::{
+    cmp::Ordering,
     collections::BTreeMap,
     io::{BufRead, Write},
 };
@@ -105,21 +106,93 @@ pub fn join<B: BufRead, S: BufRead, O: Write>(
     Ok(())
 }
 
+/// A JSON value with a total order:
+/// `null < false < true < numbers < strings < arrays < objects`.
+///
+/// The derived `Ord` relies on the variant declaration order, so keep the
+/// variants in that order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OrderedValue {
-    String(String),
+    Null,
     Bool(bool),
     Number(OrderedNumber),
-    Null,
+    String(String),
     Array(Vec<OrderedValue>),
     Object(BTreeMap<String, OrderedValue>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+/// A JSON number that compares numerically across its integer and float
+/// representations (`-1 < 2 < 2.5 < 3`). `NaN` sorts after every other
+/// number and is equal to itself; `-0.0 == 0.0 == 0`.
+#[derive(Debug, Clone, Copy)]
 pub enum OrderedNumber {
     PosInt(u64),
     NegInt(i64),
     Float(OrderedFloat<f64>),
+}
+
+impl Ord for OrderedNumber {
+    fn cmp(&self, other: &Self) -> Ordering {
+        use OrderedNumber::{Float, NegInt, PosInt};
+        match (*self, *other) {
+            (PosInt(a), PosInt(b)) => a.cmp(&b),
+            (NegInt(a), NegInt(b)) => a.cmp(&b),
+            (PosInt(a), NegInt(b)) => i128::from(a).cmp(&i128::from(b)),
+            (NegInt(a), PosInt(b)) => i128::from(a).cmp(&i128::from(b)),
+            (Float(a), Float(b)) => a.cmp(&b),
+            (PosInt(a), Float(b)) => cmp_int_float(i128::from(a), b.0),
+            (NegInt(a), Float(b)) => cmp_int_float(i128::from(a), b.0),
+            (Float(a), PosInt(b)) => cmp_int_float(i128::from(b), a.0).reverse(),
+            (Float(a), NegInt(b)) => cmp_int_float(i128::from(b), a.0).reverse(),
+        }
+    }
+}
+
+impl PartialOrd for OrderedNumber {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for OrderedNumber {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for OrderedNumber {}
+
+/// Exact comparison of an integer (anything in the i64 ∪ u64 range) with an
+/// f64, without the precision loss of casting the integer to f64.
+fn cmp_int_float(int: i128, float: f64) -> Ordering {
+    if float.is_nan() {
+        return Ordering::Less;
+    }
+    // Every i64/u64 lies strictly inside (-2^64, 2^64), so floats outside
+    // that range (including the infinities) are decided without casting.
+    const TWO_POW_64: f64 = 18_446_744_073_709_551_616.0;
+    if float >= TWO_POW_64 {
+        return Ordering::Less;
+    }
+    if float <= -TWO_POW_64 {
+        return Ordering::Greater;
+    }
+    let whole = float.trunc();
+    // `whole` is an integer-valued f64 inside (-2^64, 2^64), so the cast is
+    // exact.
+    match int.cmp(&(whole as i128)) {
+        Ordering::Equal => {
+            let frac = float - whole;
+            if frac > 0.0 {
+                Ordering::Less
+            } else if frac < 0.0 {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        }
+        ord => ord,
+    }
 }
 
 impl From<Number> for OrderedNumber {
@@ -279,5 +352,104 @@ mod tests {
         let val: OrderedNumber = serde_json::Number::from(56).into();
 
         assert_eq!(val, OrderedNumber::PosInt(56));
+    }
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn num(v: Value) -> OrderedNumber {
+        match v {
+            Value::Number(n) => n.into(),
+            _ => panic!("not a number"),
+        }
+    }
+
+    #[test]
+    fn test_numbers_compare_numerically_across_representations() {
+        let mut values = vec![
+            num(json!(3)),
+            num(json!(2.5)),
+            num(json!(-1)),
+            num(json!(5)),
+            num(json!(-2.5)),
+            num(json!(0)),
+        ];
+        values.sort();
+        assert_eq!(
+            values,
+            vec![
+                num(json!(-2.5)),
+                num(json!(-1)),
+                num(json!(0)),
+                num(json!(2.5)),
+                num(json!(3)),
+                num(json!(5)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_int_and_float_equal_values_are_equal() {
+        assert_eq!(num(json!(3)), num(json!(3.0)));
+        assert_eq!(num(json!(-7)), num(json!(-7.0)));
+        assert_eq!(num(json!(0)), num(json!(-0.0)));
+        assert!(num(json!(3)) < num(json!(3.0000001)));
+        assert!(num(json!(-3)) > num(json!(-3.0000001)));
+    }
+
+    #[test]
+    fn test_large_integers_compare_exactly_against_floats() {
+        // 2^53 + 1 is not representable as f64; casting would make it equal.
+        let big = OrderedNumber::PosInt((1 << 53) + 1);
+        let float = OrderedNumber::Float(OrderedFloat((1u64 << 53) as f64));
+        assert!(big > float);
+        assert!(OrderedNumber::PosInt(u64::MAX) < OrderedNumber::Float(OrderedFloat(1e30)));
+        assert!(OrderedNumber::NegInt(i64::MIN) > OrderedNumber::Float(OrderedFloat(-1e30)));
+        assert!(OrderedNumber::PosInt(u64::MAX) > OrderedNumber::NegInt(i64::MIN));
+    }
+
+    #[test]
+    fn test_nan_and_infinity() {
+        let nan = OrderedNumber::Float(OrderedFloat(f64::NAN));
+        let inf = OrderedNumber::Float(OrderedFloat(f64::INFINITY));
+        let neg_inf = OrderedNumber::Float(OrderedFloat(f64::NEG_INFINITY));
+        assert!(nan > inf);
+        assert!(nan > OrderedNumber::PosInt(u64::MAX));
+        assert_eq!(nan, nan);
+        assert!(inf > OrderedNumber::PosInt(u64::MAX));
+        assert!(neg_inf < OrderedNumber::NegInt(i64::MIN));
+    }
+
+    #[test]
+    fn test_value_type_order() {
+        let mut values: Vec<OrderedValue> = vec![
+            json!({"a": 1}),
+            json!([1]),
+            json!("a"),
+            json!(1),
+            json!(true),
+            json!(false),
+            json!(null),
+        ]
+        .into_iter()
+        .map(OrderedValue::from)
+        .collect();
+        values.sort();
+        let expected: Vec<OrderedValue> = vec![
+            json!(null),
+            json!(false),
+            json!(true),
+            json!(1),
+            json!("a"),
+            json!([1]),
+            json!({"a": 1}),
+        ]
+        .into_iter()
+        .map(OrderedValue::from)
+        .collect();
+        assert_eq!(values, expected);
     }
 }

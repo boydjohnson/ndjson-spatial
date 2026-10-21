@@ -23,23 +23,21 @@ pub fn compute_centroid() {
     for geojson in NdJsonGeojsonReader::default() {
         match geojson {
             Ok(geojson) => {
-                let geo_json;
-                match calculate_centroid_from_geojson(geojson) {
+                let geo_json = match calculate_centroid_from_geojson(geojson) {
                     Ok((mut feat, point)) => {
                         let p: geojson::Value = (&point).into();
                         let g = Geometry::new(p);
                         feat.geometry.replace(g);
-                        geo_json = GeoJson::Feature(feat);
+                        GeoJson::Feature(feat)
                     }
                     Err(e) => {
                         writeln!(::std::io::stderr(), "{:?}", e)
                             .expect("Unable to write to stderr");
                         break;
                     }
-                }
+                };
 
-                writeln!(::std::io::stdout(), "{}", geo_json.to_string())
-                    .expect("Unable to write to stdout");
+                writeln!(::std::io::stdout(), "{}", geo_json).expect("Unable to write to stdout");
             }
             Err(e) => {
                 if let Err(err) = writeln!(::std::io::stderr(), "{:?}", e) {

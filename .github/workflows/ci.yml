@@ -1,6 +1,6 @@
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
 
 name: CI
@@ -9,70 +9,36 @@ jobs:
   rustfmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
           components: rustfmt
       - run: cargo fmt -- --check
 
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
           components: clippy
-      - name: Install gdal
+      - name: Install gdal and geos
         run: |
           sudo apt-get update
-          sudo apt-get install libgdal-dev gdal-bin build-essential
-          export C_INCLUDE_PATH=/usr/include/gdal:$C_INCLUDE_PATH
-          export CPLUS_INCLUDE_PATH=/usr/include/gdal:$CPLUS_INCLUDE_PATH
-          sudo ldconfig
-      - name: Setup building
-        run: |
-          export CC="clang-9"
-          export CXX="clang++-9"
-      - run: cargo clippy -- -D warnings
+          sudo apt-get install -y libgdal-dev libgeos-dev
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   check:
-    name: Check ${{ matrix.toolchain }} / ${{ matrix.triple.target }}
+    name: Build and test
     runs-on: ubuntu-latest
-    env:
-      LD_LIBRARY_PATH: /usr/local/lib
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain:
-          - nightly
     steps:
-      - uses: actions/checkout@v2
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.toolchain }}
-          override: true
-      - name: Install gdal
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install gdal and geos
         run: |
           sudo apt-get update
-          sudo apt-get install libgdal-dev gdal-bin build-essential
-          export C_INCLUDE_PATH=/usr/include/gdal:$C_INCLUDE_PATH
-          export CPLUS_INCLUDE_PATH=/usr/include/gdal:$CPLUS_INCLUDE_PATH
-          sudo ldconfig
-      - name: Setup building
-        run: |
-          export CC="clang-9"
-          export CXX="clang++-9"
-      - name: Build crate
-        run: |
-          cargo build
+          sudo apt-get install -y libgdal-dev libgeos-dev
+      - name: Build
+        run: cargo build --workspace
       - name: Run tests
-        run: |
-          cargo test
+        run: cargo test --workspace

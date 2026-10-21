@@ -45,7 +45,7 @@ pub fn to_geojson() -> Result<(), NdJsonSpatialError> {
 
     let output = GeoJson::FeatureCollection(feature_collection);
 
-    write!(::std::io::stdout(), "{}", output.to_string()).expect("Unable to write to stdout");
+    write!(::std::io::stdout(), "{}", output).expect("Unable to write to stdout");
 
     Ok(())
 }

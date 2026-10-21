@@ -39,7 +39,7 @@ where
 }
 
 #[cfg(feature = "spatial")]
-impl<'a> Default for NdJsonGeojsonReader<BufReader<Stdin>> {
+impl Default for NdJsonGeojsonReader<BufReader<Stdin>> {
     fn default() -> Self {
         let s = stdin();
         Self::new(BufReader::new(s))
@@ -95,7 +95,7 @@ impl<IN> NdjsonReader<IN> {
     }
 }
 
-impl<'a> Default for NdjsonReader<BufReader<Stdin>> {
+impl Default for NdjsonReader<BufReader<Stdin>> {
     fn default() -> Self {
         Self::new(BufReader::new(stdin()))
     }
