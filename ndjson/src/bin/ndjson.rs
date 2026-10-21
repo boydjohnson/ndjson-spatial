@@ -14,10 +14,7 @@
 * limitations under the License.
 */
 
-use clap::{
-    app_from_crate, crate_authors, crate_description, crate_name, crate_version, Arg, ArgMatches,
-    SubCommand,
-};
+use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use ndjson::{
     aggregate::{aggregate, Aggregation},
     filter, from_json, join, pick_field,
@@ -40,7 +37,8 @@ fn main() {
             .subcommand_matches("filter")
             .expect("subcommand was correctly tested for");
         let expression = args
-            .value_of("expression")
+            .get_one::<String>("expression")
+            .map(String::as_str)
             .expect("expression is required")
             .to_string();
 
@@ -51,7 +49,8 @@ fn main() {
         }
     } else if let Some(args) = args.subcommand_matches("pick-field") {
         let expression = match parse_json_selector(
-            args.value_of("expression")
+            args.get_one::<String>("expression")
+                .map(String::as_str)
                 .expect("expression is required")
                 .into(),
         ) {
@@ -73,7 +72,10 @@ fn main() {
         let args = args
             .subcommand_matches("join")
             .expect("subcommand was correctly tested for");
-        let filename = args.value_of("reference").expect("reference is required");
+        let filename = args
+            .get_one::<String>("reference")
+            .map(String::as_str)
+            .expect("reference is required");
         let mut reference_file = match File::open(filename) {
             Ok(r) => BufReader::new(r),
             Err(e) => {
@@ -84,7 +86,8 @@ fn main() {
         };
 
         let ref_fields: Vec<Vec<Selector>> = match args
-            .values_of("reference-fields")
+            .get_many::<String>("reference-fields")
+            .map(|v| v.map(String::as_str))
             .expect("reference-fields is required")
             .map(|s| parse_json_selector(s.into()).map(|(_, result)| result))
             .collect()
@@ -97,7 +100,8 @@ fn main() {
             }
         };
         let stream_fields: Vec<Vec<Selector>> = match args
-            .values_of("stream-fields")
+            .get_many::<String>("stream-fields")
+            .map(|v| v.map(String::as_str))
             .expect("stream-fields is required")
             .map(|s| parse_json_selector(s.into()).map(|(_, result)| result))
             .collect()
@@ -123,16 +127,19 @@ fn main() {
         let args = args
             .subcommand_matches("from-json")
             .expect("subcommand was correctly tested for");
-        let expression = args.value_of("expression").expect("expression is required");
+        let expression = args
+            .get_one::<String>("expression")
+            .map(String::as_str)
+            .expect("expression is required");
 
         if let Err(e) = from_json::from_json(expression) {
             writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
     } else if let Some(args) = args.subcommand_matches("from-csv") {
         let delimiter = args
-            .value_of("delimiter")
-            .map(|s| s.chars().next())
-            .flatten()
+            .get_one::<String>("delimiter")
+            .map(String::as_str)
+            .and_then(|s| s.chars().next())
             .map(|d| d as u8)
             .unwrap_or(b',');
 
@@ -141,7 +148,8 @@ fn main() {
         }
     } else if let Some(args) = args.subcommand_matches("agg") {
         let aggregator_selector = args
-            .values_of("aggregator")
+            .get_many::<String>("aggregator")
+            .map(|v| v.map(String::as_str))
             .map(|mut v| {
                 (
                     v.next().unwrap(),
@@ -175,7 +183,8 @@ fn main() {
             .expect("aggregator is required");
 
         let group_by_selector = match parse_json_selector(
-            args.value_of("group-by")
+            args.get_one::<String>("group-by")
+                .map(String::as_str)
                 .expect("group-by is required")
                 .into(),
         )
@@ -198,7 +207,10 @@ fn main() {
             writeln!(std::io::stderr(), "Error: {:?}", e).expect("Unable to write to stderr");
         }
     } else if let Some(args) = args.subcommand_matches("sort") {
-        if let Some(fields) = args.values_of("fields") {
+        if let Some(fields) = args
+            .get_many::<String>("fields")
+            .map(|v| v.map(String::as_str))
+        {
             let selectors = match fields
                 .map(|f| {
                     if let Some((selector, sort_order)) = f.split_once(':') {
@@ -251,109 +263,105 @@ fn parse_sort_order(s: &str) -> bool {
     }
 }
 
-fn parse_args<'a>() -> ArgMatches<'a> {
-    app_from_crate!("../Cargo.toml")
+fn parse_args() -> ArgMatches {
+    command!()
         .subcommand(
-            SubCommand::with_name("pick-field")
+            Command::new("pick-field")
                 .about("picks a field from all of the ndjson objects")
                 .arg(
-                    Arg::with_name("expression")
+                    Arg::new("expression")
                         .required(true)
                         .help("the expression that yields a field"),
                 ),
         )
         .subcommand(
-            SubCommand::with_name("join")
+            Command::new("join")
                 .about("joins json file to ndjson stream")
                 .arg(
-                    Arg::with_name("reference")
-                        .short("r")
+                    Arg::new("reference")
+                        .short('r')
                         .long("ref")
                         .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
+                        .num_args(1)
                         .help("The ndjson file to join on"),
                 )
                 .arg(
-                    Arg::with_name("reference-fields")
+                    Arg::new("reference-fields")
                         .long("ref-fields")
                         .required(true)
-                        .takes_value(true)
+                        .num_args(1)
                         .help("The fields in the reference file to join on"),
                 )
                 .arg(
-                    Arg::with_name("stream-fields")
+                    Arg::new("stream-fields")
                         .long("stream-fields")
                         .required(true)
-                        .takes_value(true)
+                        .num_args(1)
                         .help("The fields in the ndjson stream to join on"),
                 ),
         )
         .subcommand(
-            SubCommand::with_name("filter")
+            Command::new("filter")
                 .about("returns only json that matches filter expression")
                 .arg(
-                    Arg::with_name("expression")
+                    Arg::new("expression")
                         .required(true)
                         .help("The json selector filter expression"),
                 ),
         )
         .subcommand(
-            SubCommand::with_name("from-csv")
+            Command::new("from-csv")
                 .about("Converts csv to ndjson")
                 .arg(
-                    Arg::with_name("delimiter")
-                        .takes_value(true)
-                        .number_of_values(1)
+                    Arg::new("delimiter")
+                        .num_args(1)
                         .help("The delimiter of the csv"),
                 ),
         )
         .subcommand(
-            SubCommand::with_name("from-json")
+            Command::new("from-json")
                 .about("Converts json to ndjson")
                 .arg(
-                    Arg::with_name("expression")
+                    Arg::new("expression")
                         .required(true)
                         .help("selector expression that contains the collection"),
                 ),
         )
         .subcommand(
-            SubCommand::with_name("agg")
+            Command::new("agg")
                 .about("Aggregatation commands on a grouped-by key")
                 .arg(
-                    Arg::with_name("group-by")
-                        .short("g")
+                    Arg::new("group-by")
+                        .short('g')
                         .long("group-by")
                         .help("Selector for field to group by")
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .value_names(&["selector"])
+                        .num_args(1)
+                        .value_name("selector")
                         .required(true),
                 )
                 .arg(
-                    Arg::with_name("aggregator")
-                        .short("a")
+                    Arg::new("aggregator")
+                        .short('a')
                         .long("agg")
-                        .takes_value(true)
                         .required(true)
-                        .number_of_values(2)
-                        .value_names(&["aggregator", "selector"])
+                        .num_args(2)
+                        .value_names(["aggregator", "selector"])
                         .help("aggregation function along with selector. e.g. -a sum d.salary"),
                 ),
         )
         .subcommand(
-            SubCommand::with_name("sort")
-            .about("Sort by ndjson fields")
-            .arg(
-                Arg::with_name("fields")
-                    .short("f")
-                    .long("fields")
-                    .help("Selector for fields to sort by. e.g. -f d.property_value or -f d.property_value:d")
-                    .takes_value(true)
-                    .multiple(true)
-                    .value_names(&["selector"])
-                    .required(true)
-            )
+            Command::new("sort")
+                .about("Sort by ndjson fields")
+                .arg(
+                    Arg::new("fields")
+                        .short('f')
+                        .long("fields")
+                        .help("Selector for fields to sort by. e.g. -f d.property_value or -f d.property_value:d")
+                        .num_args(1..)
+                        .action(ArgAction::Append)
+                        .value_name("selector")
+                        .required(true),
+                ),
         )
         .get_matches()
 }

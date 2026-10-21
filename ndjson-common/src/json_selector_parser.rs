@@ -24,7 +24,7 @@ use std::{
     num::{ParseFloatError, ParseIntError},
     str::{FromStr, ParseBoolError},
 };
-pub use yajlish::ndjson_handler::Selector;
+pub use yajlish_ndjson::Selector;
 
 pub type Null = Option<NonNullJsonValue>;
 
