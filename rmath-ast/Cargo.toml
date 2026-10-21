@@ -1,0 +1,13 @@
+[package]
+name = "rmath-ast"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nom = "7.0"
+lalrpop-util = { version = "0.19", features = ["lexer"] }
+ordered-float = "2.8"
+yajlish = { git = "https://github.com/boydjohnson/yajlish", features = ["ndjson"] }
+
+[build-dependencies]
+lalrpop = { version = "0.19", features = ["lexer"] }
