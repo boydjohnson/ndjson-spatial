@@ -6,6 +6,57 @@ lalrpop_mod!(pub math);
 
 pub use self::math::ExprParser;
 
+use self::ast::{Expr, Num, Term, Value};
+use ordered_float::OrderedFloat;
+
+/// Negate a numeric literal. Integers that fit stay integers; `-0` stays
+/// `PosInt(0)`; magnitudes beyond `i64::MIN` become floats.
+pub(crate) fn negate_num(n: Num) -> Num {
+    match n {
+        Num::PosInt(0) => Num::PosInt(0),
+        Num::PosInt(p) if p <= 1 << 63 => Num::Int((-(p as i128)) as i64),
+        Num::PosInt(p) => Num::Float(OrderedFloat(-(p as f64))),
+        Num::Int(i) => match i.checked_neg() {
+            Some(v) if v >= 0 => Num::PosInt(v as u64),
+            Some(v) => Num::Int(v),
+            None => Num::PosInt(1 << 63),
+        },
+        Num::Float(f) => Num::Float(OrderedFloat(-f.0)),
+    }
+}
+
+/// Unary minus: fold into numeric literals, otherwise wrap.
+#[allow(clippy::boxed_local)] // the grammar hands us a Box
+pub(crate) fn negate(e: Box<Expr>) -> Box<Expr> {
+    match *e {
+        Expr::Term(Term::Value(Value::Num(n))) => {
+            Box::new(Expr::Term(Term::Value(Value::Num(negate_num(n)))))
+        }
+        other => Box::new(Expr::Negate(Box::new(other))),
+    }
+}
+
+/// Resolve backslash escapes in a string literal or quoted key (without the
+/// surrounding quotes). Unknown escapes keep the escaped character.
+pub(crate) fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::math::{ExprParser, FloatParser, IntParser, NumParser, PosIntParser, TermParser};
@@ -163,5 +214,123 @@ mod tests {
                 ))
             )))
         );
+    }
+
+    fn num(n: Num) -> Box<Expr> {
+        Box::new(Expr::Term(Term::Value(Value::Num(n))))
+    }
+
+    fn sel(path: &[&str]) -> Box<Expr> {
+        Box::new(Expr::Term(Term::Selector(
+            path.iter()
+                .map(|p| Selector::Identifier((*p).into()))
+                .collect(),
+        )))
+    }
+
+    fn string(s: &str) -> Box<Expr> {
+        Box::new(Expr::Term(Term::Value(Value::String(s.into()))))
+    }
+
+    #[test]
+    fn test_identifier_stops_at_punctuation() {
+        assert_eq!(
+            ExprParser::new().parse("abs(d.amount)"),
+            Ok(Box::new(Expr::UnaryFunction(
+                UnaryFunction::Abs,
+                sel(&["amount"])
+            )))
+        );
+        assert_eq!(
+            ExprParser::new().parse("(d.a)*d.b"),
+            Ok(Box::new(Expr::Op(sel(&["a"]), BinaryOp::Mul, sel(&["b"]))))
+        );
+    }
+
+    #[test]
+    fn test_quoted_and_numeric_keys() {
+        assert_eq!(
+            ExprParser::new().parse(r#"d."key with spaces"[0]["other.key"].2020"#),
+            Ok(Box::new(Expr::Term(Term::Selector(vec![
+                Selector::Identifier("key with spaces".into()),
+                Selector::Index(0),
+                Selector::Identifier("other.key".into()),
+                Selector::Identifier("2020".into()),
+            ]))))
+        );
+    }
+
+    #[test]
+    fn test_strings_are_not_greedy() {
+        assert_eq!(
+            ExprParser::new().parse(r#""a" + "b""#),
+            Ok(Box::new(Expr::Op(string("a"), BinaryOp::Add, string("b"))))
+        );
+        assert_eq!(
+            ExprParser::new().parse(r#""say \"hi\"\n""#),
+            Ok(string("say \"hi\"\n"))
+        );
+    }
+
+    #[test]
+    fn test_minus_without_spaces_is_subtraction() {
+        assert_eq!(
+            ExprParser::new().parse("3-5"),
+            Ok(Box::new(Expr::Op(
+                num(Num::PosInt(3)),
+                BinaryOp::Sub,
+                num(Num::PosInt(5))
+            )))
+        );
+        assert_eq!(
+            ExprParser::new().parse("d.a-1"),
+            Ok(Box::new(Expr::Op(
+                sel(&["a"]),
+                BinaryOp::Sub,
+                num(Num::PosInt(1))
+            )))
+        );
+    }
+
+    #[test]
+    fn test_unary_minus() {
+        assert_eq!(
+            ExprParser::new().parse("2 - -3"),
+            Ok(Box::new(Expr::Op(
+                num(Num::PosInt(2)),
+                BinaryOp::Sub,
+                num(Num::Int(-3))
+            )))
+        );
+        assert_eq!(
+            ExprParser::new().parse("-d.x"),
+            Ok(Box::new(Expr::Negate(sel(&["x"]))))
+        );
+        // Python precedence: -2 ** 2 == -(2 ** 2)
+        assert_eq!(
+            ExprParser::new().parse("-2 ** 2"),
+            Ok(Box::new(Expr::Negate(Box::new(Expr::Op(
+                num(Num::PosInt(2)),
+                BinaryOp::Pow,
+                num(Num::PosInt(2))
+            )))))
+        );
+        assert_eq!(
+            ExprParser::new().parse("-9223372036854775808"),
+            Ok(num(Num::Int(i64::MIN)))
+        );
+        assert_eq!(ExprParser::new().parse("--4"), Ok(num(Num::PosInt(4))));
+        assert_eq!(
+            ExprParser::new().parse("-1.5"),
+            Ok(num(Num::Float(OrderedFloat(-1.5))))
+        );
+    }
+
+    #[test]
+    fn test_float_forms() {
+        assert_eq!(FloatParser::new().parse("1.5e3"), Ok(1500.0));
+        assert_eq!(FloatParser::new().parse("1E5"), Ok(100000.0));
+        assert_eq!(FloatParser::new().parse("2e+2"), Ok(200.0));
+        assert_eq!(FloatParser::new().parse("2.5E-1"), Ok(0.25));
     }
 }

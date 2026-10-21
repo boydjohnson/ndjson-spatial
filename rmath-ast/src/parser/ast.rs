@@ -27,13 +27,13 @@ pub enum Expr {
     Term(Term),
     Op(Box<Expr>, BinaryOp, Box<Expr>),
     UnaryFunction(UnaryFunction, Box<Expr>),
+    Negate(Box<Expr>),
 }
 
 #[derive(Debug, PartialEq)]
 pub enum UnaryFunction {
     Abs,
     Sqrt,
-    Ceiling,
     Floor,
     Ceil,
     Trunc,
@@ -63,7 +63,7 @@ pub enum UnaryFunction {
     ToInt,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
     Sub,
