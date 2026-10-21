@@ -53,7 +53,7 @@ Bool: bool = r"true|false" => {
 
 // Double-quoted with backslash escapes; non-greedy so `"a" + "b"` is two
 // strings.
-StringP: String = r#""([^"\\]|\\.)*""# => unescape(&<>[1..<>.len() - 1]);
+StringP: String = <s:r#""([^"\\]|\\.)*""#> => unescape(&s[1..s.len() - 1]);
 
 Null = r"[nN]ull";
 
@@ -68,8 +68,8 @@ pub ValueToken: Value = {
 // characters.
 pub IdentifierToken: JsonSelector = {
     r"\.[A-Za-z0-9_]+" => JsonSelector::Identifier(Into::into(&<>[1..])),
-    r#"\."([^"\\]|\\.)*""# => JsonSelector::Identifier(unescape(&<>[2..<>.len() - 1])),
-    r#"\["([^"\\]|\\.)*"\]"# => JsonSelector::Identifier(unescape(&<>[2..<>.len() - 2])),
+    <s:r#"\."([^"\\]|\\.)*""#> => JsonSelector::Identifier(unescape(&s[2..s.len() - 1])),
+    <s:r#"\["([^"\\]|\\.)*"\]"#> => JsonSelector::Identifier(unescape(&s[2..s.len() - 2])),
 };
 
 pub ArrayToken: JsonSelector = {

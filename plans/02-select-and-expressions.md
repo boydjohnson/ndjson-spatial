@@ -178,8 +178,8 @@ Findings from reading `rmath-ast` (`src/math.lalrpop`, `src/parser/ast.rs`):
    after parsing. (`UnaryFunction` also has both `Ceiling` and `Ceil`.)
 7. **Missing pieces.** comparisons, boolean ops, `in`, `is null`, n-ary calls,
    select list, `as`, `*`/`except`, and an evaluator.
-8. **Toolchain.** lalrpop 0.19 → current; nom 7 is listed but unused by the
-   grammar.
+8. **Toolchain.** ~~lalrpop 0.19 → current; nom 7 is listed but unused by the
+   grammar.~~ Done: lalrpop 0.23, and the unused nom dependency is dropped.
 
 ### Where rmath-ast lives
 
