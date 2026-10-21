@@ -14,10 +14,7 @@
 * limitations under the License.
 */
 
-use gdal::{
-    errors::GdalError,
-    vector::{Geometry as GdalGeometry, ToGdal},
-};
+use gdal::{errors::GdalError, vector::Geometry as GdalGeometry};
 use geojson::{Geometry, Value};
 use geojson_rstar::Feature;
 
@@ -45,15 +42,7 @@ impl GeometryType {
 }
 
 pub fn geojson_to_gdal(feature: &Feature) -> Result<GdalGeometry, GdalError> {
-    match feature {
-        Feature::Point(p) => p.geo_point().to_gdal(),
-        Feature::LineString(l) => l.geo_line().to_gdal(),
-        Feature::Polygon(p) => p.geo_polygon().to_gdal(),
-        Feature::MultiPoint(p) => p.geo_points().to_gdal(),
-        Feature::MultiLineString(l) => l.geo_lines().to_gdal(),
-        Feature::MultiPolygon(p) => p.geo_polygons().to_gdal(),
-        Feature::GeometryCollection(g) => g.geo_geometry().to_gdal(),
-    }
+    GdalGeometry::from_geojson(&geojson_rstar_to_geojson_geometry(feature).to_string())
 }
 
 pub fn geojson_rstar_to_geojson_geometry(feature: &Feature) -> Geometry {
