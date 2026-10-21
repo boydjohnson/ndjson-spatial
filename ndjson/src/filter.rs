@@ -81,9 +81,8 @@ pub fn select_from_json_object(
             Selector::Identifier(ident) => {
                 let ident = ident
                     .strip_prefix('"')
-                    .map(|s| s.strip_suffix('"'))
-                    .flatten()
-                    .unwrap_or_else(|| ident.as_str());
+                    .and_then(|s| s.strip_suffix('"'))
+                    .unwrap_or(ident.as_str());
 
                 if let Value::Array(_) = last_value {
                     return Err(NdJsonSpatialError::Error(format!(
@@ -97,7 +96,7 @@ pub fn select_from_json_object(
                 } else {
                     return Err(NdJsonSpatialError::Error(format!(
                         "Unable to get attribute {} on non-object",
-                        &ident
+                        ident
                     )));
                 }
             }

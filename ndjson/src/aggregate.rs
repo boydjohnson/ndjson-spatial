@@ -19,8 +19,7 @@ pub enum Aggregation {
 fn strip_quotes(ident: &str) -> String {
     ident
         .strip_prefix('"')
-        .map(|s| s.strip_suffix('"'))
-        .flatten()
+        .and_then(|s| s.strip_suffix('"'))
         .unwrap_or(ident)
         .to_owned()
 }

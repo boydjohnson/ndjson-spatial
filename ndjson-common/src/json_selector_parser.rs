@@ -309,7 +309,7 @@ named!(
 );
 
 fn is_digit(c: char) -> bool {
-    c.is_digit(10)
+    c.is_ascii_digit()
 }
 
 fn is_digit_or_space(c: char) -> bool {

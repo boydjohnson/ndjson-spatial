@@ -91,7 +91,7 @@ pub fn transform<R: BufRead, W: Write>(
 
             let feat: geojson::Feature = feat.into();
 
-            if let Err(e) = writeln!(writer, "{}", feat.to_string()) {
+            if let Err(e) = writeln!(writer, "{}", feat) {
                 writeln!(std::io::stderr(), "{}", e).expect("Unable to write to stderr");
             }
         }
