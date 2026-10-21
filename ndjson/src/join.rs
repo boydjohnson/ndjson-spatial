@@ -19,91 +19,108 @@ use ndjson_common::{
     error::NdJsonSpatialError, json_selector_parser::Selector, ndjson::NdjsonReader,
 };
 use ordered_float::OrderedFloat;
-use serde_json::{Number, Value};
+use serde_json::{Map, Number, Value};
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
     io::{BufRead, Write},
 };
 
+/// Joins each record of `stream` to the records of `reference_reader` whose
+/// key matches.
+///
+/// The key is the tuple of the selected fields: a stream record matches a
+/// reference record only when every `stream_fields[i]` equals the
+/// corresponding `reference_fields[i]`. Records missing a key field, or whose
+/// key contains a `null`, array or object, never match. On field collisions
+/// the reference record's value wins.
 pub fn join<B: BufRead, S: BufRead, O: Write>(
-    mut reference_reader: &mut B,
+    reference_reader: &mut B,
     reference_fields: Vec<Vec<Selector>>,
     stream_fields: Vec<Vec<Selector>>,
     stream: S,
     mut out: O,
 ) -> Result<(), NdJsonSpatialError> {
-    let references: Vec<BTreeMap<OrderedValue, Vec<Value>>> = reference_fields
-        .into_iter()
-        .map(|reference_field| {
-            let mut references = BTreeMap::new();
+    if reference_fields.is_empty() {
+        return Err(NdJsonSpatialError::Error(
+            "join needs at least one key field".to_owned(),
+        ));
+    }
+    if reference_fields.len() != stream_fields.len() {
+        return Err(NdJsonSpatialError::Error(format!(
+            "join needs the same number of reference fields ({}) and stream fields ({})",
+            reference_fields.len(),
+            stream_fields.len()
+        )));
+    }
 
-            for g in NdjsonReader::new(&mut reference_reader).flatten() {
-                if g.is_object() {
-                    match select_from_json_object(g.clone(), &reference_field) {
-                        Ok(field_value) => {
-                            let field_value: OrderedValue = field_value.into();
+    let mut references: BTreeMap<Vec<OrderedValue>, Vec<Map<String, Value>>> = BTreeMap::new();
 
-                            references
-                                .entry(field_value)
-                                .and_modify(|v: &mut Vec<Value>| v.push(g.clone()))
-                                .or_insert_with(|| vec![g]);
-                        }
-                        Err(e) => {
-                            writeln!(
-                                std::io::stderr(),
-                                "Unable to select from reference object: {:?}",
-                                e
-                            )
-                            .expect("Unable to write to stderr");
-                        }
-                    }
+    for g in NdjsonReader::new(reference_reader).flatten() {
+        if let Value::Object(o) = g {
+            match select_key(&o, &reference_fields) {
+                Ok(Some(key)) => references.entry(key).or_default().push(o),
+                Ok(None) => (),
+                Err(e) => {
+                    writeln!(
+                        std::io::stderr(),
+                        "Unable to select from reference object: {:?}",
+                        e
+                    )
+                    .expect("Unable to write to stderr");
                 }
             }
-            references
-        })
-        .collect();
+        }
+    }
 
     for val in NdjsonReader::new(stream) {
-        stream_fields
-            .iter()
-            .map(|identifiers| match val.clone() {
-                Ok(value) => select_from_json_object(value, identifiers).ok(),
-                Err(e) => {
-                    writeln!(std::io::stderr(), "Error reading: {:?}", e)
-                        .expect("Unable to write to stderr");
-                    None
+        let o = match val {
+            Ok(Value::Object(o)) => o,
+            Ok(_) => continue,
+            Err(e) => {
+                writeln!(std::io::stderr(), "Error reading: {:?}", e)
+                    .expect("Unable to write to stderr");
+                continue;
+            }
+        };
+
+        let key = match select_key(&o, &stream_fields) {
+            Ok(Some(key)) => key,
+            Ok(None) | Err(_) => continue,
+        };
+
+        if let Some(matches) = references.get(&key) {
+            for reference in matches {
+                let mut joined = o.clone();
+                for (k, v) in reference {
+                    joined.insert(k.to_owned(), v.to_owned());
                 }
-            })
-            .zip(references.iter())
-            .for_each(|(v, references)| {
-                let v: Option<OrderedValue> = v.map(|v| v.into());
 
-                if let Some(v) = v {
-                    if !matches!(
-                        v,
-                        OrderedValue::Array(_) | OrderedValue::Object(_) | OrderedValue::Null
-                    ) {
-                        if let Some(g) = references.get(&v) {
-                            for value in g {
-                                if let (Value::Object(s), Ok(Value::Object(mut o))) =
-                                    (value, val.clone())
-                                {
-                                    for (k, v) in s.into_iter() {
-                                        o.insert(k.to_owned(), v.to_owned());
-                                    }
-
-                                    let value = Value::from(o);
-
-                                    writeln!(out, "{}", value).expect("Unable to write to stdout");
-                                }
-                            }
-                        }
-                    }
-                }
-            })
+                writeln!(out, "{}", Value::Object(joined)).expect("Unable to write to stdout");
+            }
+        }
     }
     Ok(())
+}
+
+/// Selects the composite join key from `object`. Returns `Ok(None)` when a key
+/// component is a `null`, array or object, which never join.
+fn select_key(
+    object: &Map<String, Value>,
+    fields: &[Vec<Selector>],
+) -> Result<Option<Vec<OrderedValue>>, NdJsonSpatialError> {
+    let mut key = Vec::with_capacity(fields.len());
+    for field in fields {
+        let v: OrderedValue = select_from_json_object(Value::Object(object.clone()), field)?.into();
+        if matches!(
+            v,
+            OrderedValue::Array(_) | OrderedValue::Object(_) | OrderedValue::Null
+        ) {
+            return Ok(None);
+        }
+        key.push(v);
+    }
+    Ok(Some(key))
 }
 
 /// A JSON value with a total order:
@@ -337,6 +354,95 @@ mod tests {
             output,
             "{\"brand\":[1,2,3,4],\"color\":null,\"country\":\"USA\",\"county\":\"Alameda\",\"state\":\"California\"}\n".as_bytes().to_vec()
         );
+    }
+
+    fn ident(name: &str) -> Vec<Selector> {
+        vec![Selector::Identifier(name.to_owned())]
+    }
+
+    fn run_join(reference: &str, fields: &[&str], stream: &str) -> String {
+        let fields: Vec<Vec<Selector>> = fields.iter().map(|f| ident(f)).collect();
+        let mut output = vec![];
+        join(
+            &mut reference.as_bytes(),
+            fields.clone(),
+            fields,
+            stream.as_bytes(),
+            &mut output,
+        )
+        .unwrap();
+        String::from_utf8(output).unwrap()
+    }
+
+    #[test]
+    fn test_join_composite_key_requires_every_field_to_match() {
+        let reference = concat!(
+            "{\"state\": \"MN\", \"county\": \"Hennepin\", \"pop\": 1}\n",
+            "{\"state\": \"MN\", \"county\": \"Ramsey\", \"pop\": 2}\n",
+            "{\"state\": \"WI\", \"county\": \"Ramsey\", \"pop\": 3}\n",
+        );
+        let stream = concat!(
+            "{\"state\": \"MN\", \"county\": \"Ramsey\"}\n",
+            "{\"state\": \"WI\", \"county\": \"Hennepin\"}\n",
+        );
+
+        assert_eq!(
+            run_join(reference, &["state", "county"], stream),
+            "{\"county\":\"Ramsey\",\"pop\":2,\"state\":\"MN\"}\n"
+        );
+    }
+
+    #[test]
+    fn test_join_composite_key_uses_later_fields() {
+        // Previously only the first field was ever matched, because the
+        // reference reader was exhausted after building the first index.
+        let reference = "{\"a\": 1, \"b\": 1, \"r\": true}\n";
+        let stream = "{\"a\": 1, \"b\": 2}\n";
+
+        assert_eq!(run_join(reference, &["a", "b"], stream), "");
+    }
+
+    #[test]
+    fn test_join_composite_key_emits_each_match_once() {
+        let reference = "{\"a\": 1, \"b\": 2, \"r\": true}\n";
+        let stream = "{\"a\": 1, \"b\": 2}\n{\"a\": 1, \"b\": 2}\n";
+
+        assert_eq!(
+            run_join(reference, &["a", "b"], stream),
+            "{\"a\":1,\"b\":2,\"r\":true}\n{\"a\":1,\"b\":2,\"r\":true}\n"
+        );
+    }
+
+    #[test]
+    fn test_join_numbers_match_across_representations() {
+        let reference = "{\"id\": 1.0, \"r\": true}\n";
+        let stream = "{\"id\": 1}\n";
+
+        assert_eq!(
+            run_join(reference, &["id"], stream),
+            "{\"id\":1.0,\"r\":true}\n"
+        );
+    }
+
+    #[test]
+    fn test_join_skips_null_and_missing_keys() {
+        let reference = "{\"a\": null, \"b\": 1}\n{\"b\": 1}\n";
+        let stream = "{\"a\": null, \"b\": 1}\n{\"b\": 1}\n";
+
+        assert_eq!(run_join(reference, &["a", "b"], stream), "");
+    }
+
+    #[test]
+    fn test_join_rejects_mismatched_field_counts() {
+        let mut output = vec![];
+        let result = join(
+            &mut "".as_bytes(),
+            vec![ident("a"), ident("b")],
+            vec![ident("a")],
+            "".as_bytes(),
+            &mut output,
+        );
+        assert!(result.is_err());
     }
 
     #[test]

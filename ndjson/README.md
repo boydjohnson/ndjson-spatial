@@ -58,7 +58,7 @@ cat <file1.ndjson> | ndjson join --ref <file2.ndjson> --ref-fields <selector>...
 Join on state and county names.
 
 ```sh
-cat state_county.ndjson | ndjson join -ref state_county_population.ndjson --ref-fields d.state d.county --stream-fields d.state d.county
+cat state_county.ndjson | ndjson join --ref state_county_population.ndjson --ref-fields d.state d.county --stream-fields d.state d.county
 ```
 
 ### Agg
