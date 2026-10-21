@@ -289,15 +289,15 @@ fn parse_args() -> ArgMatches {
                     Arg::new("reference-fields")
                         .long("ref-fields")
                         .required(true)
-                        .num_args(1)
-                        .help("The fields in the reference file to join on"),
+                        .num_args(1..)
+                        .help("The fields in the reference file to join on, matched as a composite key"),
                 )
                 .arg(
                     Arg::new("stream-fields")
                         .long("stream-fields")
                         .required(true)
-                        .num_args(1)
-                        .help("The fields in the ndjson stream to join on"),
+                        .num_args(1..)
+                        .help("The fields in the ndjson stream to join on, matched as a composite key"),
                 ),
         )
         .subcommand(

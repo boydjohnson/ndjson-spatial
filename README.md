@@ -64,7 +64,7 @@ ls -lh ../target/release-ndjson/ndjson
 ```
 
 ```bash
-    ndjson join --ref <ref> --ref-field <ref-fields> --stream-field <stream-field>
+    ndjson join --ref <ref> --ref-fields <ref-fields> --stream-fields <stream-fields>
 ```
     - ref-fields, stream-fields should be space delimited list of 'd.properties.FIELD_NAME'
 
