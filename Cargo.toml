@@ -3,7 +3,8 @@
 members = [
     "ndjson",
     "ndjson-common",
-    "ndjson-spatial"
+    "ndjson-spatial",
+    "rmath-ast"
 ]
 
 [profile.release-ndjson]

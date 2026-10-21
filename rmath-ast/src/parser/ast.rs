@@ -1,5 +1,5 @@
 use ordered_float::OrderedFloat;
-use yajlish::ndjson_handler::Selector;
+use yajlish_ndjson::Selector;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub enum Num {

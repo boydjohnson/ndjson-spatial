@@ -11,7 +11,7 @@ mod tests {
     use super::math::{ExprParser, FloatParser, IntParser, NumParser, PosIntParser, TermParser};
     use crate::parser::ast::{BinaryOp, Expr, Num, Term, UnaryFunction, Value};
     use ordered_float::OrderedFloat;
-    use yajlish::ndjson_handler::Selector;
+    use yajlish_ndjson::Selector;
 
     #[test]
     fn test_float_parser() {

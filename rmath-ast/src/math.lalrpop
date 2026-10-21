@@ -1,5 +1,5 @@
 use crate::parser::ast::{BinaryOp, Expr, Num, Term, Value, UnaryFunction};
-use yajlish::ndjson_handler;
+use yajlish_ndjson::Selector as JsonSelector;
 use lalrpop_util::ParseError;
 use ordered_float::OrderedFloat;
 
@@ -53,23 +53,23 @@ pub ValueToken: Value = {
     <Null> => Value::Null,
 }
 
-pub IdentifierToken: ndjson_handler::Selector = r"\.[^\[\./\*\+\^ -]+" => ndjson_handler::Selector::Identifier(Into::into(<>.trim_start_matches('.')));
+pub IdentifierToken: JsonSelector = r"\.[^\[\./\*\+\^ -]+" => JsonSelector::Identifier(Into::into(<>.trim_start_matches('.')));
 
-pub ArrayToken: ndjson_handler::Selector = {
+pub ArrayToken: JsonSelector = {
     r"\[[0-9]+\]" =>? <>.trim_end_matches(']')
         .trim_start_matches('[')
         .parse::<usize>()
         .map_err(|_| ParseError::User {
         error: "Index too big",
-    }).map(ndjson_handler::Selector::Index)
+    }).map(JsonSelector::Index)
 }
 
-EitherToken: ndjson_handler::Selector = {
+EitherToken: JsonSelector = {
     <i:IdentifierToken> => i,
     <a:ArrayToken> => a,
 }
 
-pub Selector: Vec<ndjson_handler::Selector> = {
+pub Selector: Vec<JsonSelector> = {
     "d" <r: EitherToken *> => {
         r
     },
