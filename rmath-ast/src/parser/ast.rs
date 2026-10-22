@@ -16,13 +16,13 @@ pub enum Value {
     Null,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Term {
     Value(Value),
     Selector(Vec<Selector>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Term(Term),
     Op(Box<Expr>, BinaryOp, Box<Expr>),

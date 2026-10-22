@@ -85,15 +85,45 @@ fn main() {
         for warning in &list.warnings {
             eprintln!("select: {}", warning);
         }
+        let by = match args.get_one::<String>("by").map(|by| select::parse_by(by)) {
+            None => vec![],
+            Some(Ok(by)) => by,
+            Some(Err(err)) => {
+                eprintln!("select: {}", err);
+                exit(1);
+            }
+        };
+        let strategy = if args.get_flag("hash") {
+            select::GroupStrategy::Hash {
+                max_groups: *args
+                    .get_one::<usize>("max-groups")
+                    .expect("max-groups has a default"),
+            }
+        } else if args.get_flag("grouped") {
+            select::GroupStrategy::Grouped
+        } else {
+            select::GroupStrategy::Sorted
+        };
+        let options = select::GroupOptions {
+            by,
+            strategy,
+            allow_unbounded: args.get_flag("allow-unbounded"),
+        };
         let mut output = BufWriter::with_capacity(1_000_000, stdout().lock());
-        match select::ndjson_select(&list, mode, &mut stdin().lock(), &mut output) {
+        match select::ndjson_select_grouped(&list, mode, &options, &mut stdin().lock(), &mut output)
+        {
             Ok(summary) => {
                 for item in summary.errors {
                     eprintln!(
-                        "select: {} error{} in '{}', written as null (first at record {}: {})",
+                        "select: {} error{} in '{}', {} (first at record {}: {})",
                         item.count,
                         if item.count == 1 { "" } else { "s" },
                         item.item,
+                        if summary.aggregate {
+                            "skipped"
+                        } else {
+                            "written as null"
+                        },
                         item.first.0,
                         item.first.1
                     );
@@ -239,6 +269,7 @@ fn main() {
             Ok(AggregateSummary {
                 errors,
                 first_error: Some((record, field, err)),
+                ..
             }) => {
                 writeln!(
                     ::std::io::stderr(),
@@ -341,7 +372,7 @@ fn parse_args() -> ArgMatches {
         )
         .subcommand(
             Command::new("select")
-                .about("Writes a list of expressions for each record")
+                .about("Writes a list of expressions for each record, or aggregates per group")
                 .arg(
                     Arg::new("list")
                         .required(true)
@@ -361,6 +392,41 @@ fn parse_args() -> ArgMatches {
                         .long("tsv")
                         .action(ArgAction::SetTrue)
                         .help("Write tab-separated values: strings unquoted, null empty"),
+                )
+                .arg(
+                    Arg::new("by")
+                        .long("by")
+                        .value_name("keys")
+                        .help("Aggregate per group of these comma-separated key expressions, e.g. --by 'd.state, d.county'. The input must be sorted by them unless --hash or --grouped is given"),
+                )
+                .arg(
+                    Arg::new("hash")
+                        .long("hash")
+                        .action(ArgAction::SetTrue)
+                        .requires("by")
+                        .conflicts_with("grouped")
+                        .help("Group unsorted input in memory, one set of aggregates per key (up to --max-groups), written in key order"),
+                )
+                .arg(
+                    Arg::new("grouped")
+                        .long("grouped")
+                        .action(ArgAction::SetTrue)
+                        .requires("by")
+                        .help("Input has equal keys next to each other, in any order: group in constant memory without checking the order"),
+                )
+                .arg(
+                    Arg::new("max-groups")
+                        .long("max-groups")
+                        .value_name("n")
+                        .value_parser(clap::value_parser!(usize))
+                        .default_value("1000000")
+                        .help("With --hash, fail rather than keep more than this many groups"),
+                )
+                .arg(
+                    Arg::new("allow-unbounded")
+                        .long("allow-unbounded")
+                        .action(ArgAction::SetTrue)
+                        .help("Allow count_distinct and collect, whose memory grows with the input"),
                 ),
         )
         .subcommand(

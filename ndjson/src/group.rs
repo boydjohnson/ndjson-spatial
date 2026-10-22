@@ -65,23 +65,66 @@ pub struct AggregateSummary {
     /// The first failure: 1-based record number, the output field (or
     /// `"group key"`), and the error.
     pub first_error: Option<(u64, String, EvalError)>,
+    /// Per item, in list order: how many values failed, and the first
+    /// failure's record number and error.
+    pub items: Vec<Option<ItemErrors>>,
+    /// The same for the group key.
+    pub key: Option<ItemErrors>,
 }
 
+pub type ItemErrors = (u64, (u64, EvalError));
+
 impl AggregateSummary {
-    fn record(&mut self, record: u64, name: &str, e: EvalError) {
+    /// Count a failure of item `item`, or of the group key for `None`.
+    fn record(&mut self, record: u64, item: Option<usize>, names: &[String], e: EvalError) {
         self.errors += 1;
+        let name = item.map_or("group key", |i| names[i].as_str());
         self.first_error
-            .get_or_insert_with(|| (record, name.to_string(), e));
+            .get_or_insert_with(|| (record, name.to_string(), e.clone()));
+        let slot = match item {
+            Some(i) => {
+                if self.items.len() <= i {
+                    self.items.resize(i + 1, None);
+                }
+                &mut self.items[i]
+            }
+            None => &mut self.key,
+        };
+        match slot {
+            Some((count, _)) => *count += 1,
+            None => *slot = Some((1, (record, e))),
+        }
     }
 }
 
 type Key = Vec<OrderedValue>;
 
+/// Group `read` and write one JSON object per group to `write`, keyed by
+/// [`Aggregation::names`].
 pub fn group<R: BufRead, W: Write>(
     aggregation: &Aggregation,
     read: R,
     write: &mut W,
 ) -> Result<AggregateSummary, NdJsonSpatialError> {
+    group_rows(aggregation, read, |values| {
+        let row: Map<String, Value> = aggregation.names.iter().cloned().zip(values).collect();
+        writeln!(write, "{}", Value::Object(row))
+            .map(|()| true)
+            .map_err(|e| NdJsonSpatialError::Error(format!("IO error: {}", e)))
+    })
+}
+
+/// Group `read` and pass each group's values, in item order, to `emit`.
+/// Stops early when `emit` returns `false`.
+pub fn group_rows<R, E>(
+    aggregation: &Aggregation,
+    read: R,
+    mut emit_row: E,
+) -> Result<AggregateSummary, NdJsonSpatialError>
+where
+    R: BufRead,
+    E: FnMut(Vec<Value>) -> Result<bool, NdJsonSpatialError>,
+{
     let Aggregation {
         names,
         list,
@@ -92,16 +135,18 @@ pub fn group<R: BufRead, W: Write>(
 
     let mut summary = AggregateSummary::default();
     let mut emit = |state: &AggregateState, n: u64, summary: &mut AggregateSummary| {
-        let mut row = Map::new();
-        for (name, value) in names.iter().zip(list.finish(state)) {
-            let value = value.unwrap_or_else(|e| {
-                summary.record(n, name, e);
-                Value::Null
-            });
-            row.insert(name.clone(), value);
-        }
-        writeln!(write, "{}", Value::Object(row))
-            .map_err(|e| NdJsonSpatialError::Error(format!("IO error: {}", e)))
+        let row = list
+            .finish(state)
+            .into_iter()
+            .enumerate()
+            .map(|(i, value)| {
+                value.unwrap_or_else(|e| {
+                    summary.record(n, Some(i), names, e);
+                    Value::Null
+                })
+            })
+            .collect();
+        emit_row(row)
     };
 
     // the current run's key, as compared and as read
@@ -117,7 +162,7 @@ pub fn group<R: BufRead, W: Write>(
         let state = match grouping {
             Grouping::Stream => &mut whole,
             Grouping::Sorted { check_order } => {
-                let Some(raw) = group_key(by, &record, n, &mut summary) else {
+                let Some(raw) = group_key(by, &record, n, names, &mut summary) else {
                     continue;
                 };
                 let key: Key = raw.iter().cloned().map(OrderedValue::from).collect();
@@ -134,7 +179,9 @@ pub fn group<R: BufRead, W: Write>(
                                     show(previous_raw)
                                 )));
                             }
-                            emit(state, n - 1, &mut summary)?;
+                            if !emit(state, n - 1, &mut summary)? {
+                                return Ok(summary);
+                            }
                         }
                         current = Some((key, raw, list.start()));
                     }
@@ -142,7 +189,7 @@ pub fn group<R: BufRead, W: Write>(
                 &mut current.as_mut().expect("just set").2
             }
             Grouping::Hash { max_groups } => {
-                let Some(raw) = group_key(by, &record, n, &mut summary) else {
+                let Some(raw) = group_key(by, &record, n, names, &mut summary) else {
                     continue;
                 };
                 let key: Key = raw.into_iter().map(OrderedValue::from).collect();
@@ -156,11 +203,15 @@ pub fn group<R: BufRead, W: Write>(
                 groups.entry(key).or_insert_with(|| list.start())
             }
         };
-        list.update(state, &record, |item, e| summary.record(n, &names[item], e));
+        list.update(state, &record, |item, e| {
+            summary.record(n, Some(item), names, e)
+        });
     }
 
     match grouping {
-        Grouping::Stream => emit(&whole, n, &mut summary)?,
+        Grouping::Stream => {
+            emit(&whole, n, &mut summary)?;
+        }
         Grouping::Sorted { .. } => {
             if let Some((_, _, state)) = &current {
                 emit(state, n, &mut summary)?;
@@ -168,7 +219,9 @@ pub fn group<R: BufRead, W: Write>(
         }
         Grouping::Hash { .. } => {
             for state in groups.values() {
-                emit(state, n, &mut summary)?;
+                if !emit(state, n, &mut summary)? {
+                    break;
+                }
             }
         }
     }
@@ -181,12 +234,13 @@ fn group_key(
     by: &[CompiledExpr],
     record: &Value,
     n: u64,
+    names: &[String],
     summary: &mut AggregateSummary,
 ) -> Option<Vec<Value>> {
     match by.iter().map(|k| k.eval(record)).collect() {
         Ok(key) => Some(key),
         Err(e) => {
-            summary.record(n, "group key", e);
+            summary.record(n, None, names, e);
             None
         }
     }

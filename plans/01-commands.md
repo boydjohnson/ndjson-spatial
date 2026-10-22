@@ -21,7 +21,7 @@ Space classes are defined in [README.md](README.md#space-classes).
 | Command | Class | Status | Notes |
 |---------|-------|--------|-------|
 | `filter <expr>` | S0 | exists | Done: on the shared expression grammar, with `and`/`or`/`not`, computed comparisons (`d.a * 2 > d.b`), `in [..]`, `is null`, and function calls. Old `d.x == Virtual Currency` (unquoted string) syntax keeps working. Records that fail to evaluate are skipped and summarised on stderr. |
-| `select <exprs>` | S0 | exists | Done (scalar mode): projection, computed fields, `as` aliases, `*` / `* except (..)`, `-r/--raw`, `--tsv`. Keys keep select-list order; evaluation errors become `null` and are summarised on stderr. Not yet: aggregate mode, `--strict`. See [02](02-select-and-expressions.md). |
+| `select <exprs>` | S0 | exists | Done (scalar mode): projection, computed fields, `as` aliases, `*` / `* except (..)`, `-r/--raw`, `--tsv`. Keys keep select-list order; evaluation errors become `null` and are summarised on stderr. Aggregate mode is done too (see below). Not yet: `--strict`. See [02](02-select-and-expressions.md). |
 | `pick-field <selector>` | S0 | deprecate | Alias for `select -r <selector>`. |
 | `explode <selector>` | S0 | new | One output record per element of an array field (`unnest`). `--keep-empty` emits one record with null. |
 | `flatten [--sep .]` | S0 | new | Nested objects → dotted keys; `unflatten` is the inverse. Useful before `to-csv`. |
@@ -41,10 +41,10 @@ Space classes are defined in [README.md](README.md#space-classes).
 
 | Command | Class | Status | Notes |
 |---------|-------|--------|-------|
-| `select count(), sum(d.x), ...` | S0 | new | Whole-stream aggregates with constant state. |
-| `select ... --by <expr>` | S0 | new | Group-by over **sorted** input (adjacent runs). Errors on out-of-order keys. |
-| `select ... --by <expr> --hash` | S2 | new | One accumulator set per distinct key; for unsorted input with few groups. |
-| `agg --group-by g --agg f sel` | S2 / S0 | deprecate | Now runs on the shared aggregate engine (`ndjson/src/group.rs`): repeatable `-a`/`-g`, `--sorted`/`--grouped` for constant memory, `--max-groups`. Becomes an alias for `select <f>(sel) --by g --hash` once `select` has aggregate mode. |
+| `select count(), sum(d.x), ...` | S0 | exists | Whole-stream aggregates with constant state. |
+| `select ... --by <expr>` | S0 | exists | Group-by over **sorted** input (adjacent runs). Errors on out-of-order keys; `--grouped` skips the check. |
+| `select ... --by <expr> --hash` | S2 | exists | One accumulator set per distinct key; for unsorted input with few groups. |
+| `agg --group-by g --agg f sel` | S2 / S0 | deprecate | Now runs on the shared aggregate engine (`ndjson/src/group.rs`): repeatable `-a`/`-g`, `--sorted`/`--grouped` for constant memory, `--max-groups`. Same as `select '<g>, <f>(sel)' --by <g> --hash`; could become an alias. |
 | `describe` | S0 (per field) | new | Per-field count, null count, type histogram, min, max, mean, stddev, approx distinct (HLL), approx p50/p90/p99 (KLL/t-digest). Memory grows with the number of distinct *field names*, not records. |
 
 ### Ordering and combining
