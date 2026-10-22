@@ -179,8 +179,14 @@ Findings from reading `rmath-ast` (`src/math.lalrpop`, `src/parser/ast.rs`):
    arguments, and `FunctionRegistry::resolve`/`compile` binds them (checking
    arity) into a `CompiledExpr` for evaluation. The existing functions are
    registered as built-ins (`rmath-ast/src/builtins.rs`); other crates add
-   theirs with `FunctionRegistry::register`. Only scalar functions exist so
-   far; aggregates will be a second `FunctionKind`.
+   theirs with `FunctionRegistry::register`. Aggregates are a second
+   `FunctionKind` (`rmath-ast/src/aggregate.rs`): `count sum avg min max
+   first last argmin argmax var var_pop stddev stddev_pop`, plus unbounded
+   `count_distinct collect`. `AggregateList::compile` splits a list into
+   accumulator slots and finishing expressions and applies the bare-column
+   rules below; plain `resolve` rejects aggregate calls. Sketches
+   (`approx_count_distinct`, `approx_quantile`, `median`, `approx_top_k`) are
+   still to do.
 7. **Missing pieces.** ~~comparisons, boolean ops, `in`, `is null`, and an
    evaluator~~ (done: `Expr::Compare/And/Or/Not/IsNull/In`, evaluated with
    three-valued `null` logic and short-circuiting; `CompiledExpr::eval_bool`

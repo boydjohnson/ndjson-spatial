@@ -16,8 +16,10 @@
 
 use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use ndjson::{
-    aggregate::{aggregate, Aggregation},
-    filter, from_json, head, join, pick_field, select, tail,
+    aggregate::{aggregate, AggOptions},
+    filter, from_json,
+    group::{AggregateSummary, Grouping},
+    head, join, pick_field, select, tail,
 };
 use ndjson_common::{
     error::NdJsonSpatialError,
@@ -202,64 +204,58 @@ fn main() {
             writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
     } else if let Some(args) = args.subcommand_matches("agg") {
-        let aggregator_selector = args
-            .get_many::<String>("aggregator")
-            .map(|v| v.map(String::as_str))
-            .map(|mut v| {
-                (
-                    v.next().unwrap(),
-                    parse_json_selector(v.next().unwrap().into()).map(|v| v.1),
-                )
-            })
-            .map(|(first, second)| match (first, second) {
-                ("count", Ok(selector)) => Aggregation::Count(selector),
-                ("min", Ok(selector)) => Aggregation::Min(selector),
-                ("max", Ok(selector)) => Aggregation::Max(selector),
-                ("sum", Ok(selector)) => Aggregation::Sum(selector),
-                (&_, Err(e)) => {
-                    writeln!(
-                        std::io::stderr(),
-                        "Error parsing aggregation selector: {}",
-                        e
-                    )
-                    .expect("Unable to write to stderr");
-                    exit(1);
-                }
-                (a, Ok(_)) => {
-                    writeln!(
-                        std::io::stderr(),
-                        "--agg must be one of 'count', 'sum', 'min', 'max', not: {}",
-                        a
-                    )
-                    .expect("Unable to write to stderr");
-                    exit(1);
-                }
-            })
-            .expect("aggregator is required");
-
-        let group_by_selector = match parse_json_selector(
-            args.get_one::<String>("group-by")
-                .map(String::as_str)
-                .expect("group-by is required")
-                .into(),
-        )
-        .map(|f| f.1)
-        {
-            Ok(s) => s,
-            Err(e) => {
-                writeln!(std::io::stderr(), "Error parsing group-by selector: {}", e)
-                    .expect("Unable to write to stderr");
-                exit(1)
+        let strings = |name: &str| -> Vec<String> {
+            args.get_many::<String>(name)
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default()
+        };
+        let aggregates = strings("aggregator")
+            .chunks(2)
+            .map(|pair| (pair[0].clone(), pair[1].clone()))
+            .collect();
+        let grouping = if args.get_flag("grouped") {
+            Grouping::Sorted { check_order: false }
+        } else if args.get_flag("sorted") {
+            Grouping::Sorted { check_order: true }
+        } else {
+            Grouping::Hash {
+                max_groups: *args
+                    .get_one::<usize>("max-groups")
+                    .expect("max-groups has a default"),
             }
         };
+        let options = AggOptions {
+            group_by: strings("group-by"),
+            aggregates,
+            grouping,
+            allow_unbounded: args.get_flag("allow-unbounded"),
+        };
 
-        if let Err(e) = aggregate(
-            aggregator_selector,
-            group_by_selector,
+        match aggregate(
+            &options,
             &mut BufReader::with_capacity(500_000, &mut stdin().lock()),
             BufWriter::with_capacity(1_000_000, stdout().lock()),
         ) {
-            writeln!(std::io::stderr(), "Error: {:?}", e).expect("Unable to write to stderr");
+            Ok(AggregateSummary {
+                errors,
+                first_error: Some((record, field, err)),
+            }) => {
+                writeln!(
+                    ::std::io::stderr(),
+                    "agg: skipped {} value{} that failed to evaluate (first at record {}, {}: {})",
+                    errors,
+                    if errors == 1 { "" } else { "s" },
+                    record,
+                    field,
+                    err
+                )
+                .expect("Unable to write to stderr");
+            }
+            Ok(_) => {}
+            Err(NdJsonSpatialError::Error(err)) => {
+                writeln!(::std::io::stderr(), "agg: {}", err).expect("Unable to write to stderr");
+                exit(1);
+            }
         }
     } else if let Some(args) = args.subcommand_matches("sort") {
         if let Some(fields) = args
@@ -422,13 +418,23 @@ fn parse_args() -> ArgMatches {
         )
         .subcommand(
             Command::new("agg")
-                .about("Aggregatation commands on a grouped-by key")
+                .about("Aggregates per group key")
+                .long_about(
+                    "Aggregates per group key, one output record per group.\n\n\
+                     By default groups are kept in memory (one set of aggregates per \
+                     distinct key, up to --max-groups) and written in key order at the \
+                     end. With --sorted, input sorted by the group key is grouped in \
+                     constant memory.\n\n\
+                     Functions: count sum avg min max first last var var_pop stddev \
+                     stddev_pop, and with --allow-unbounded count_distinct collect.",
+                )
                 .arg(
                     Arg::new("group-by")
                         .short('g')
                         .long("group-by")
-                        .help("Selector for field to group by")
+                        .help("Selector for a field to group by; repeat for a composite key")
                         .num_args(1)
+                        .action(ArgAction::Append)
                         .value_name("selector")
                         .required(true),
                 )
@@ -438,8 +444,36 @@ fn parse_args() -> ArgMatches {
                         .long("agg")
                         .required(true)
                         .num_args(2)
+                        .action(ArgAction::Append)
                         .value_names(["aggregator", "selector"])
-                        .help("aggregation function along with selector. e.g. -a sum d.salary"),
+                        .help("aggregation function along with selector, e.g. -a sum d.salary; repeatable"),
+                )
+                .arg(
+                    Arg::new("sorted")
+                        .long("sorted")
+                        .action(ArgAction::SetTrue)
+                        .help("Input is sorted by the group key: group in constant memory, failing on out-of-order keys"),
+                )
+                .arg(
+                    Arg::new("grouped")
+                        .long("grouped")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("sorted")
+                        .help("Input has equal keys next to each other, in any order: group in constant memory without checking the order"),
+                )
+                .arg(
+                    Arg::new("max-groups")
+                        .long("max-groups")
+                        .value_name("n")
+                        .value_parser(clap::value_parser!(usize))
+                        .default_value("1000000")
+                        .help("Fail rather than keep more than this many groups in memory"),
+                )
+                .arg(
+                    Arg::new("allow-unbounded")
+                        .long("allow-unbounded")
+                        .action(ArgAction::SetTrue)
+                        .help("Allow count_distinct and collect, whose memory grows with the input"),
                 ),
         )
         .subcommand(

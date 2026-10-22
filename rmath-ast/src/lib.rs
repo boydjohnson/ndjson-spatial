@@ -1,3 +1,4 @@
+pub mod aggregate;
 pub mod builtins;
 pub mod eval;
 #[allow(
@@ -11,7 +12,9 @@ pub mod eval;
 pub mod parser;
 pub mod registry;
 
+pub use aggregate::{Accumulator, AggregateList, AggregateState};
 pub use eval::EvalError;
 pub use registry::{
-    Arity, CompileError, CompiledExpr, Function, FunctionKind, FunctionRegistry, ResolveError,
+    Arity, CompileError, CompiledExpr, Extreme, Function, FunctionKind, FunctionRegistry,
+    ResolveError,
 };
