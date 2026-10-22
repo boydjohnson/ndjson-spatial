@@ -5,15 +5,14 @@ authors = ["Boyd Johnson <johnson.boyd@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-geo = { version = "^0.14", optional = true }
-geos = { version = "7.0.0", features = ["json"], optional = true }
-geojson = { version = "^0.19", features = ["geo-types"], optional = true }
-geo-types = { version = "^0.6", optional = true }
-geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar", optional = true }
+geo = { version = "0.33", optional = true }
+geos = { version = "11.3", optional = true }
+geojson = { version = "1.0", features = ["geo-types"], optional = true }
+geo-types = { version = "0.7", optional = true }
 nom = "4.2"
 serde_json = "1.0"
 yajlish-ndjson = "0.1.0"
 yajlish = "0.5.0"
 
 [features]
-spatial = ["geos", "geojson-rstar", "geo-types", "geojson", "geo"]
+spatial = ["geos", "geo-types", "geojson", "geo"]

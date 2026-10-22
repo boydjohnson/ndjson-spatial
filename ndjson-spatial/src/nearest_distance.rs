@@ -14,15 +14,23 @@
 * limitations under the License.
 */
 
-use geojson::GeoJson;
-use geojson_rstar::PointFeature;
+use geojson::{GeoJson, GeometryValue};
 use ndjson_common::{error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
 use rstar::{PointDistance, RTree};
 use std::{
-    convert::TryInto,
     fs::File,
     io::{Read, Write},
 };
+
+fn point_coordinates(value: &GeometryValue) -> Option<[f64; 2]> {
+    match value {
+        GeometryValue::Point { coordinates } => match coordinates.as_slice() {
+            [x, y] => Some([*x, *y]),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialError> {
     let mut geojson_string = String::new();
@@ -34,16 +42,17 @@ pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialErr
         NdJsonSpatialError::Error(format!("Failed to parse reference geojson: {}", e))
     })?;
     if let GeoJson::FeatureCollection(feature_collection) = json_data {
-        let point_features = feature_collection
+        let points = feature_collection
             .features
-            .into_iter()
-            .filter_map(|point| point.try_into().ok())
-            .collect::<Vec<PointFeature>>();
-        let tree = RTree::bulk_load(point_features);
+            .iter()
+            .filter_map(|f| f.geometry.as_ref())
+            .filter_map(|g| point_coordinates(&g.value))
+            .collect::<Vec<[f64; 2]>>();
+        let tree = RTree::bulk_load(points);
 
         for geojson in NdJsonGeojsonReader::default() {
             if let GeoJson::Feature(mut feature) = geojson? {
-                if let geojson::Value::Point(ref point_vec) = feature
+                let value = &feature
                     .geometry
                     .as_ref()
                     .ok_or_else(|| {
@@ -51,28 +60,22 @@ pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialErr
                             "Missing Geometry on feature, cannot compute distance".into(),
                         )
                     })?
-                    .value
-                {
-                    let nearest = tree.nearest_neighbor(&[
-                        *point_vec.first()
-                            .ok_or_else(|| NdJsonSpatialError::Error("GeoJson point has less than 2 coordinates".into()))?, 
-                        *point_vec.get(1)
-                                .ok_or_else(|| NdJsonSpatialError::Error("GeoJson point has less than 2 coordinates".into()))?])
-                                .ok_or_else(||
-                        NdJsonSpatialError::Error("Missing nearest neighbor for point. Did reference file contain geojson points".to_string())
-                    )?;
-                    let distance = nearest.distance_2(&[
-                        *point_vec.first().ok_or_else(|| {
-                            NdJsonSpatialError::Error(
+                    .value;
+                if let GeometryValue::Point { coordinates } = value {
+                    let point = match coordinates.as_slice() {
+                        [x, y, ..] => [*x, *y],
+                        _ => {
+                            return Err(NdJsonSpatialError::Error(
                                 "GeoJson point has less than 2 coordinates".into(),
-                            )
-                        })?,
-                        *point_vec.get(1).ok_or_else(|| {
-                            NdJsonSpatialError::Error(
-                                "GeoJson point has less than 2 coordinates".into(),
-                            )
-                        })?,
-                    ]);
+                            ))
+                        }
+                    };
+                    let nearest = tree.nearest_neighbor(point).ok_or_else(|| {
+                        NdJsonSpatialError::Error(
+                            "Missing nearest neighbor for point. Did reference file contain geojson points".to_string(),
+                        )
+                    })?;
+                    let distance = nearest.distance_2(&point);
 
                     let number = serde_json::Number::from_f64(distance).ok_or_else(|| {
                         NdJsonSpatialError::Error(
@@ -80,9 +83,9 @@ pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialErr
                         )
                     })?;
 
-                    feature.properties.as_mut().map(|p| {
-                        p.insert("distance".to_string(), serde_json::Value::Number(number))
-                    });
+                    if let Some(p) = feature.properties.as_mut() {
+                        p.insert("distance".to_string(), serde_json::Value::Number(number));
+                    }
 
                     writeln!(::std::io::stdout(), "{}", feature)
                         .expect("Unable to write to stdout");

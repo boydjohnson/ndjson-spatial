@@ -14,7 +14,7 @@
 * limitations under the License.
 */
 
-use geojson::Value;
+use geojson::GeometryValue;
 use geos::{Geom, Geometry};
 use ndjson_common::{
     common::calculate_bounding_box_if_not_exists, error::NdJsonSpatialError,
@@ -56,39 +56,40 @@ where
             if let geojson::GeoJson::Feature(mut feat) = geo {
                 let area = match feat.geometry.as_ref() {
                     Some(geometry) => match geometry.value {
-                        Value::MultiPolygon(_) | Value::Polygon(_) => {
-                            let geos_geometry: Geometry = geometry.clone().try_into()?;
+                        GeometryValue::MultiPolygon { .. } | GeometryValue::Polygon { .. } => {
+                            let geo_geometry: geo::Geometry<f64> = geometry.try_into()?;
+                            let geos_geometry: Geometry = (&geo_geometry).try_into()?;
                             geos_geometry.area()?
                         }
-                        Value::Point(_) => {
+                        GeometryValue::Point { .. } => {
                             return Err(
                                 NdJsonSpatialError::Error(
                                     "Area got called on Geojson Feature that was of type Point not polygon or multipolygon.".to_string()
                                 )
                             );
                         }
-                        Value::MultiPoint(_) => {
+                        GeometryValue::MultiPoint { .. } => {
                             return Err(
                                 NdJsonSpatialError::Error(
                                     "Area got called on Geojson Feature that was of type MultiPoint not polygon or multipolygon.".to_string()
                                 )
                             );
                         }
-                        Value::LineString(_) => {
+                        GeometryValue::LineString { .. } => {
                             return Err(
                                 NdJsonSpatialError::Error(
                                     "Area got called on Geojson Feature that was of type LineString not polygon or multipolygon.".to_string()
                                 )
                             );
                         }
-                        Value::MultiLineString(_) => {
+                        GeometryValue::MultiLineString { .. } => {
                             return Err(
                                 NdJsonSpatialError::Error(
                                     "Area got called on Geojson Feature that was of type MultiLineString not polygon or multipolygon.".to_string()
                                 )
                             );
                         }
-                        Value::GeometryCollection(_) => {
+                        GeometryValue::GeometryCollection { .. } => {
                             return Err(
                                 NdJsonSpatialError::Error(
                                     "Area got called on Geojson Feature that was of type GeometryCollection not polygon or multipolygon.".to_string()

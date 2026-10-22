@@ -11,11 +11,10 @@ name = "ndjson-spatial"
 [dependencies]
 clap = "4.6"
 gdal = "0.19"
-geo = "^0.14"
-geos = { version = "7.0.0", features = ["json", "geo"] }
-geo-types = "^0.6"
-geojson = { version = "^0.19", features = ["geo-types"] }
-geojson-rstar = { git = "https://github.com/boydjohnson/geojson-rstar" }
+geo = "0.33"
+geos = { version = "11.3", features = ["geo"] }
+geo-types = "0.7"
+geojson = { version = "1.0", features = ["geo-types"] }
 ndjson-common = { path = "../ndjson-common", features = ["spatial"] }
-rstar = "^0.8"
+rstar = "0.13"
 serde_json = "^1.0"

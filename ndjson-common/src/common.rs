@@ -14,61 +14,49 @@
  * limitations under the License.
  */
 
-use geo::{prelude::BoundingRect, Rect};
-use geojson::{Feature, Value};
-use geojson_rstar::conversion;
+use geo::{BoundingRect, Rect};
+use geojson::Feature;
+use std::convert::TryFrom;
 
 pub fn calculate_bounding_box_if_not_exists(feat: &mut Feature) {
     if feat.bbox.is_none() {
-        let bbox = match feat.geometry.as_ref().map(|g| &g.value) {
-            Some(Value::Point(p)) => {
-                let point = conversion::create_geo_point(p);
-                Some(vec![point.lng(), point.lat(), point.lng(), point.lat()])
-            }
-            Some(Value::MultiPoint(mp)) => {
-                let geo_multi_point = conversion::create_geo_multi_point(mp);
-                let bounding_rect = geo_multi_point.bounding_rect();
-                do_calc_bounding_box(bounding_rect)
-            }
-            Some(Value::LineString(l)) => {
-                let geo_linestring = conversion::create_geo_line_string(l);
-                let bounding_rect = geo_linestring.bounding_rect();
-                do_calc_bounding_box(bounding_rect)
-            }
-            Some(Value::MultiLineString(ml)) => {
-                let geo_multi_linestring = conversion::create_geo_multi_line_string(ml);
-                let bounding_rect = geo_multi_linestring.bounding_rect();
-                do_calc_bounding_box(bounding_rect)
-            }
-            Some(Value::Polygon(p)) => {
-                let geo_polygon = conversion::create_geo_polygon(p);
-                let bounding_rect = geo_polygon.bounding_rect();
-                do_calc_bounding_box(bounding_rect)
-            }
-            Some(Value::MultiPolygon(mp)) => {
-                let geo_multi_polygon = conversion::create_geo_multi_polygon(mp);
-                let bounding_rect = geo_multi_polygon.bounding_rect();
-                do_calc_bounding_box(bounding_rect)
-            }
-            _ => None,
-        };
-        feat.bbox = bbox;
+        feat.bbox = feat
+            .geometry
+            .as_ref()
+            .and_then(|g| geo::Geometry::<f64>::try_from(g).ok())
+            .and_then(|g| g.bounding_rect())
+            .map(bbox_from_rect);
     }
 }
 
-fn do_calc_bounding_box(bounding_rect: Option<Rect<f64>>) -> Option<Vec<f64>> {
-    bounding_rect.map(|b| vec![b.min().x, b.max().x, b.min().y, b.max().y])
+/// A GeoJSON bbox, `[minx, miny, maxx, maxy]`.
+pub fn bbox_from_rect(rect: Rect<f64>) -> Vec<f64> {
+    vec![rect.min().x, rect.min().y, rect.max().x, rect.max().y]
 }
 
-pub fn to_geo_json(geo_geometry: &geo::Geometry<f64>) -> geojson::Value {
-    match geo_geometry {
-        geo::Geometry::Point(p) => geojson::Value::from(p),
-        geo::Geometry::LineString(l) => geojson::Value::from(l),
-        geo::Geometry::Polygon(p) => geojson::Value::from(p),
-        geo::Geometry::MultiPoint(p) => geojson::Value::from(p),
-        geo::Geometry::MultiPolygon(p) => geojson::Value::from(p),
-        geo::Geometry::MultiLineString(p) => geojson::Value::from(p),
-        geo::Geometry::GeometryCollection(g) => geojson::Value::from(g),
-        _ => panic!("Unsupported geometry type"),
+pub fn to_geo_json(geo_geometry: &geo::Geometry<f64>) -> geojson::GeometryValue {
+    geojson::GeometryValue::from(geo_geometry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bbox_is_min_x_min_y_max_x_max_y() {
+        let mut feat: Feature = r#"{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[0,0],[2,0],[2,1],[0,1],[0,0]]]}}"#
+            .parse()
+            .expect("valid feature");
+        calculate_bounding_box_if_not_exists(&mut feat);
+        assert_eq!(feat.bbox, Some(vec![0.0, 0.0, 2.0, 1.0]));
+    }
+
+    #[test]
+    fn test_existing_bbox_is_kept() {
+        let mut feat: Feature = r#"{"type":"Feature","bbox":[1,2,3,4],"properties":{},"geometry":{"type":"Point","coordinates":[0,0]}}"#
+            .parse()
+            .expect("valid feature");
+        calculate_bounding_box_if_not_exists(&mut feat);
+        assert_eq!(feat.bbox, Some(vec![1.0, 2.0, 3.0, 4.0]));
     }
 }
