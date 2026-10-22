@@ -20,7 +20,7 @@ Space classes are defined in [README.md](README.md#space-classes).
 
 | Command | Class | Status | Notes |
 |---------|-------|--------|-------|
-| `filter <expr>` | S0 | change | Moves to the shared expression grammar; gains `and`/`or`/`not`, computed comparisons (`d.a * 2 > d.b`), `in [..]`, `is null`. Old `d.x == Virtual Currency` (unquoted string) syntax keeps working. |
+| `filter <expr>` | S0 | exists | Done: on the shared expression grammar, with `and`/`or`/`not`, computed comparisons (`d.a * 2 > d.b`), `in [..]`, `is null`, and function calls. Old `d.x == Virtual Currency` (unquoted string) syntax keeps working. Records that fail to evaluate are skipped and summarised on stderr. |
 | `select <exprs>` | S0 | new | Projection + computed fields + aliases + `*`. See [02](02-select-and-expressions.md). |
 | `pick-field <selector>` | S0 | deprecate | Alias for `select -r <selector>`. |
 | `explode <selector>` | S0 | new | One output record per element of an array field (`unnest`). `--keep-empty` emits one record with null. |

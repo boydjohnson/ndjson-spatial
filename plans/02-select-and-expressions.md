@@ -181,8 +181,11 @@ Findings from reading `rmath-ast` (`src/math.lalrpop`, `src/parser/ast.rs`):
    registered as built-ins (`rmath-ast/src/builtins.rs`); other crates add
    theirs with `FunctionRegistry::register`. Only scalar functions exist so
    far; aggregates will be a second `FunctionKind`.
-7. **Missing pieces.** comparisons, boolean ops, `in`, `is null`,
-   select list, `as`, `*`/`except`, and an evaluator.
+7. **Missing pieces.** ~~comparisons, boolean ops, `in`, `is null`, and an
+   evaluator~~ (done: `Expr::Compare/And/Or/Not/IsNull/In`, evaluated with
+   three-valued `null` logic and short-circuiting; `CompiledExpr::eval_bool`
+   for predicates; `filter` uses it). Still missing: select list, `as`,
+   `*`/`except`.
 8. **Toolchain.** ~~lalrpop 0.19 → current; nom 7 is listed but unused by the
    grammar.~~ Done: lalrpop 0.23, and the unused nom dependency is dropped.
 

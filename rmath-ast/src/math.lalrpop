@@ -1,4 +1,4 @@
-use crate::parser::ast::{BinaryOp, Expr, Num, Term, Value};
+use crate::parser::ast::{BinaryOp, CompareOp, Expr, Num, Term, Value};
 use crate::parser::{negate, negate_num, unescape};
 use yajlish_ndjson::Selector as JsonSelector;
 use lalrpop_util::ParseError;
@@ -71,8 +71,11 @@ pub ValueToken: Value = {
 pub IdentifierToken: JsonSelector = {
     r"\.[A-Za-z0-9_]+" => JsonSelector::Identifier(Into::into(&<>[1..])),
     <s:r#"\."([^"\\]|\\.)*""#> => JsonSelector::Identifier(unescape(&s[2..s.len() - 1])),
-    <s:r#"\["([^"\\]|\\.)*"\]"#> => JsonSelector::Identifier(unescape(&s[2..s.len() - 2])),
+    <k:BracketKey> => JsonSelector::Identifier(k),
 };
+
+// `["key"]`, one token.
+BracketKey: String = <s:r#"\["([^"\\]|\\.)*"\]"#> => unescape(&s[2..s.len() - 2]);
 
 pub ArrayToken: JsonSelector = {
     r"\[[0-9]+\]" =>? <>.trim_end_matches(']')
@@ -121,7 +124,64 @@ ExprMac<NextTier, Op>: Box<Expr> = {
     <e:ExprMac<NextTier, Op>> <o:Op> <n:NextTier> => Box::new(Expr::Op(e, o, n)),
 }
 
+// Precedence, loosest first: `or`, `and`, `not`, comparisons / `is null` /
+// `in`, `+ -`, `* /`, unary `-`, `**`.
 pub Expr: Box<Expr> = {
+    OrExpr,
+};
+
+OrExpr: Box<Expr> = {
+    AndExpr,
+    <l:OrExpr> "or" <r:AndExpr> => Box::new(Expr::Or(l, r)),
+};
+
+AndExpr: Box<Expr> = {
+    NotExpr,
+    <l:AndExpr> "and" <r:NotExpr> => Box::new(Expr::And(l, r)),
+};
+
+NotExpr: Box<Expr> = {
+    CompareExpr,
+    "not" <e:NotExpr> => Box::new(Expr::Not(e)),
+};
+
+// Non-associative: `a < b < c` doesn't parse.
+CompareExpr: Box<Expr> = {
+    Sum,
+    <l:Sum> <o:CompareOp> <r:Sum> => Box::new(Expr::Compare(l, o, r)),
+    <e:Sum> "is" Null => Box::new(Expr::IsNull { expr: e, negated: false }),
+    <e:Sum> "is" "not" Null => Box::new(Expr::IsNull { expr: e, negated: true }),
+    <e:Sum> "in" <list:InList> => Box::new(Expr::In { expr: e, list, negated: false }),
+    <e:Sum> "not" "in" <list:InList> => Box::new(Expr::In { expr: e, list, negated: true }),
+};
+
+CompareOp: CompareOp = {
+    "==" => CompareOp::Eq,
+    "!=" => CompareOp::Ne,
+    "<" => CompareOp::Lt,
+    "<=" => CompareOp::Le,
+    ">" => CompareOp::Gt,
+    ">=" => CompareOp::Ge,
+};
+
+// `[lit, ...]`. The lexer reads a one-element `[3]` or `["a"]` as an
+// index/key token, so those are accepted here too.
+InList: Vec<Value> = {
+    "[" <Comma<ListLiteral>> "]",
+    <k:BracketKey> => vec![Value::String(k)],
+    <a:ArrayToken> => match a {
+        JsonSelector::Index(i) => vec![Value::Num(Num::PosInt(i as u64))],
+        JsonSelector::Identifier(k) => vec![Value::String(k)],
+    },
+};
+
+ListLiteral: Value = {
+    ValueToken,
+    "-" <n:UnsignedNum> => Value::Num(negate_num(n)),
+};
+
+// Arithmetic.
+Sum: Box<Expr> = {
     ExprMac<Tier2, Tier1Op>,
 };
 

@@ -60,7 +60,7 @@ pub(crate) fn unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::math::{ExprParser, FloatParser, IntParser, NumParser, PosIntParser, TermParser};
-    use crate::parser::ast::{BinaryOp, Expr, Num, Term, Value};
+    use crate::parser::ast::{BinaryOp, CompareOp, Expr, Num, Term, Value};
     use ordered_float::OrderedFloat;
     use yajlish_ndjson::Selector;
 
@@ -382,5 +382,169 @@ mod tests {
         assert_eq!(FloatParser::new().parse("1E5"), Ok(100000.0));
         assert_eq!(FloatParser::new().parse("2e+2"), Ok(200.0));
         assert_eq!(FloatParser::new().parse("2.5E-1"), Ok(0.25));
+    }
+    fn cmp(l: Box<Expr>, op: CompareOp, r: Box<Expr>) -> Box<Expr> {
+        Box::new(Expr::Compare(l, op, r))
+    }
+
+    #[test]
+    fn test_comparison_operators() {
+        let ops = [
+            ("==", CompareOp::Eq),
+            ("!=", CompareOp::Ne),
+            ("<", CompareOp::Lt),
+            ("<=", CompareOp::Le),
+            (">", CompareOp::Gt),
+            (">=", CompareOp::Ge),
+        ];
+        for (text, op) in ops {
+            assert_eq!(
+                ExprParser::new().parse(&format!("d.a {} 1", text)),
+                Ok(cmp(sel(&["a"]), op, num(Num::PosInt(1)))),
+                "{}",
+                text
+            );
+        }
+        // no spaces needed, and negative literals work on the right
+        assert_eq!(
+            ExprParser::new().parse("d.a<-40"),
+            Ok(cmp(sel(&["a"]), CompareOp::Lt, num(Num::Int(-40))))
+        );
+    }
+
+    #[test]
+    fn test_comparisons_bind_looser_than_arithmetic() {
+        assert_eq!(
+            ExprParser::new().parse("d.a * 2 > d.b + 1"),
+            Ok(cmp(
+                Box::new(Expr::Op(sel(&["a"]), BinaryOp::Mul, num(Num::PosInt(2)))),
+                CompareOp::Gt,
+                Box::new(Expr::Op(sel(&["b"]), BinaryOp::Add, num(Num::PosInt(1)))),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_comparisons_do_not_chain() {
+        assert!(ExprParser::new().parse("1 < d.a < 3").is_err());
+        assert!(ExprParser::new().parse("d.a == d.b == d.c").is_err());
+        assert!(ExprParser::new().parse("(d.a == d.b) == true").is_ok());
+    }
+
+    #[test]
+    fn test_boolean_precedence() {
+        let a = || cmp(sel(&["a"]), CompareOp::Eq, num(Num::PosInt(1)));
+        let b = || cmp(sel(&["b"]), CompareOp::Eq, num(Num::PosInt(2)));
+        let c = || cmp(sel(&["c"]), CompareOp::Eq, num(Num::PosInt(3)));
+        // and binds tighter than or
+        assert_eq!(
+            ExprParser::new().parse("d.a == 1 or d.b == 2 and d.c == 3"),
+            Ok(Box::new(Expr::Or(a(), Box::new(Expr::And(b(), c())))))
+        );
+        // both are left-associative
+        assert_eq!(
+            ExprParser::new().parse("d.a == 1 and d.b == 2 and d.c == 3"),
+            Ok(Box::new(Expr::And(Box::new(Expr::And(a(), b())), c())))
+        );
+        // not binds looser than comparisons, tighter than and
+        assert_eq!(
+            ExprParser::new().parse("not d.a == 1 and d.b == 2"),
+            Ok(Box::new(Expr::And(Box::new(Expr::Not(a())), b())))
+        );
+        assert_eq!(
+            ExprParser::new().parse("not not d.a == 1"),
+            Ok(Box::new(Expr::Not(Box::new(Expr::Not(a())))))
+        );
+        // parentheses override
+        assert_eq!(
+            ExprParser::new().parse("(d.a == 1 or d.b == 2) and d.c == 3"),
+            Ok(Box::new(Expr::And(Box::new(Expr::Or(a(), b())), c())))
+        );
+    }
+
+    #[test]
+    fn test_is_null() {
+        assert_eq!(
+            ExprParser::new().parse("d.a is null"),
+            Ok(Box::new(Expr::IsNull {
+                expr: sel(&["a"]),
+                negated: false
+            }))
+        );
+        assert_eq!(
+            ExprParser::new().parse("d.a + 1 is not Null"),
+            Ok(Box::new(Expr::IsNull {
+                expr: Box::new(Expr::Op(sel(&["a"]), BinaryOp::Add, num(Num::PosInt(1)))),
+                negated: true
+            }))
+        );
+        assert!(ExprParser::new().parse("d.a is 3").is_err());
+    }
+
+    #[test]
+    fn test_in_lists() {
+        let in_list = |list: Vec<Value>, negated| {
+            Ok(Box::new(Expr::In {
+                expr: sel(&["s"]),
+                list,
+                negated,
+            }))
+        };
+        assert_eq!(
+            ExprParser::new().parse(r#"d.s in ["MN", "WI", null, -1, 2.5, true]"#),
+            in_list(
+                vec![
+                    Value::String("MN".into()),
+                    Value::String("WI".into()),
+                    Value::Null,
+                    Value::Num(Num::Int(-1)),
+                    Value::Num(Num::Float(OrderedFloat(2.5))),
+                    Value::Bool(true),
+                ],
+                false
+            )
+        );
+        assert_eq!(
+            ExprParser::new().parse("d.s not in []"),
+            in_list(vec![], true)
+        );
+        // one-element lists lex as an index or key token
+        assert_eq!(
+            ExprParser::new().parse("d.s in [3]"),
+            in_list(vec![Value::Num(Num::PosInt(3))], false)
+        );
+        assert_eq!(
+            ExprParser::new().parse(r#"d.s not in ["x"]"#),
+            in_list(vec![Value::String("x".into())], true)
+        );
+        // lists hold literals, not expressions
+        assert!(ExprParser::new().parse("d.s in [d.t]").is_err());
+        assert!(ExprParser::new().parse("d.s in d.t").is_err());
+    }
+
+    #[test]
+    fn test_keywords_are_still_keys() {
+        assert_eq!(
+            ExprParser::new().parse("d.and or d.not"),
+            Ok(Box::new(Expr::Or(sel(&["and"]), sel(&["not"]))))
+        );
+        assert_eq!(
+            ExprParser::new().parse("index(d.in)"),
+            Ok(call("index", vec![sel(&["in"])]))
+        );
+    }
+
+    #[test]
+    fn test_booleans_inside_calls_and_parens() {
+        assert_eq!(
+            ExprParser::new().parse("f(d.a > 1, not d.b)"),
+            Ok(call(
+                "f",
+                vec![
+                    cmp(sel(&["a"]), CompareOp::Gt, num(Num::PosInt(1))),
+                    Box::new(Expr::Not(sel(&["b"]))),
+                ]
+            ))
+        );
     }
 }

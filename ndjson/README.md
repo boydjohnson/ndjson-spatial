@@ -45,8 +45,22 @@ cat <file.ndjson> | ndjson filter <selector>
 Filter where field is equal to a value
 
 ```sh
-cat <complaints.ndjson> | ndjson filter 'd.product == Virtual Currency'
+cat <complaints.ndjson> | ndjson filter 'd.product == "Virtual Currency"'
 ```
+
+Expressions can combine comparisons with `and`, `or`, and `not`, compute
+values, test lists and nulls, and call functions:
+
+```sh
+ndjson filter 'd.price * d.qty > 100 and d.state in ["MN", "WI"]'
+ndjson filter 'd.manager is not null or not d.active'
+ndjson filter 'tolower(d.product) == "mortgage"'
+```
+
+A missing field is `null`. Records where the expression is `false` or
+`null` are dropped; records where it can't be evaluated (e.g. `"abc" * 2`)
+are dropped too and counted on stderr. The older unquoted form
+`d.product == Virtual Currency` still works.
 
 ### Head and Tail
 

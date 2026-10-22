@@ -42,10 +42,27 @@ fn main() {
             .expect("expression is required")
             .to_string();
 
-        if let Err(err) =
-            filter::ndjson_filter(expression, &mut stdin().lock(), &mut stdout().lock())
-        {
-            writeln!(::std::io::stderr(), "{:?}", err).expect("Unable to write to stderr");
+        match filter::ndjson_filter(expression, &mut stdin().lock(), &mut stdout().lock()) {
+            Ok(filter::FilterSummary {
+                errors,
+                first_error: Some((record, err)),
+            }) => {
+                writeln!(
+                    ::std::io::stderr(),
+                    "filter: skipped {} record{} that failed to evaluate (first at record {}: {})",
+                    errors,
+                    if errors == 1 { "" } else { "s" },
+                    record,
+                    err
+                )
+                .expect("Unable to write to stderr");
+            }
+            Ok(_) => {}
+            Err(NdJsonSpatialError::Error(err)) => {
+                writeln!(::std::io::stderr(), "filter: {}", err)
+                    .expect("Unable to write to stderr");
+                exit(1);
+            }
         }
     } else if let Some(args) = args.subcommand_matches("pick-field") {
         let expression = match parse_json_selector(
@@ -320,7 +337,7 @@ fn parse_args() -> ArgMatches {
                 .arg(
                     Arg::new("expression")
                         .required(true)
-                        .help("The json selector filter expression"),
+                        .help("Keep records where this expression is true, e.g. 'd.a * 2 > d.b and d.state in [\"MN\", \"WI\"]'"),
                 ),
         )
         .subcommand(
