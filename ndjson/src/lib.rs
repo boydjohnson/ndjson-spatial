@@ -5,6 +5,7 @@ pub mod from_json;
 pub mod group;
 pub mod head;
 pub mod join;
+pub mod memcomparable;
 pub mod pick_field;
 mod records;
 pub mod select;

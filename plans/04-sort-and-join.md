@@ -48,6 +48,16 @@ ndjson sort -k d.state -k d.pop:d [-S 512M] [-T /tmp] [--stable] [--check]
 
 Space: O(budget) memory, O(n) disk.
 
+Status: done. The sort is always stable, so there is no `--stable` flag.
+Run files are length-prefixed `key, line` pairs rather than tab-separated,
+since encoded keys are binary. The key encoding lives in
+`ndjson/src/memcomparable.rs` for merge join and `--by` to reuse. A key that
+fails to evaluate (`d.s * 2` on a string) sorts as `null` and is counted on
+stderr; a missing field is `null`. Run files are unnamed temp files, so
+SIGINT and SIGKILL leave nothing behind. Merging is tiered: once
+`--batch-size` runs share a level they merge into one, which bounds open
+files while reading.
+
 ## `join`
 
 ### Merge join (default) — S0

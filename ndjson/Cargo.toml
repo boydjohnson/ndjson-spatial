@@ -16,3 +16,4 @@ ndjson-common = { path = "../ndjson-common" }
 ordered-float = "^2.0"
 rmath-ast = { path = "../rmath-ast" }
 serde_json = { version = "1.0", features = ["preserve_order"] }
+tempfile = "3"
