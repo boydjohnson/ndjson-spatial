@@ -28,9 +28,12 @@
 
 use crate::{
     builtins,
-    eval::{binary, literal_to_json, negate, select, EvalError},
+    eval::{
+        binary, compare, json_eq, literal_to_json, logic_operand, logic_result, negate, select,
+        EvalError,
+    },
     parser::{
-        ast::{BinaryOp, Expr, Term},
+        ast::{BinaryOp, CompareOp, Expr, Term},
         ExprParser,
     },
 };
@@ -233,6 +236,33 @@ impl FunctionRegistry {
                     .collect::<Result<_, _>>()?;
                 CompiledExpr::Call(Arc::clone(function), args)
             }
+            Expr::Compare(left, op, right) => CompiledExpr::Compare(
+                Box::new(self.resolve(left)?),
+                *op,
+                Box::new(self.resolve(right)?),
+            ),
+            Expr::And(left, right) => CompiledExpr::And(
+                Box::new(self.resolve(left)?),
+                Box::new(self.resolve(right)?),
+            ),
+            Expr::Or(left, right) => CompiledExpr::Or(
+                Box::new(self.resolve(left)?),
+                Box::new(self.resolve(right)?),
+            ),
+            Expr::Not(inner) => CompiledExpr::Not(Box::new(self.resolve(inner)?)),
+            Expr::IsNull { expr, negated } => CompiledExpr::IsNull {
+                expr: Box::new(self.resolve(expr)?),
+                negated: *negated,
+            },
+            Expr::In {
+                expr,
+                list,
+                negated,
+            } => CompiledExpr::In {
+                expr: Box::new(self.resolve(expr)?),
+                list: list.iter().map(literal_to_json).collect(),
+                negated: *negated,
+            },
         })
     }
 }
@@ -309,6 +339,19 @@ pub enum CompiledExpr {
     Negate(Box<CompiledExpr>),
     Op(Box<CompiledExpr>, BinaryOp, Box<CompiledExpr>),
     Call(Arc<Function>, Vec<CompiledExpr>),
+    Compare(Box<CompiledExpr>, CompareOp, Box<CompiledExpr>),
+    And(Box<CompiledExpr>, Box<CompiledExpr>),
+    Or(Box<CompiledExpr>, Box<CompiledExpr>),
+    Not(Box<CompiledExpr>),
+    IsNull {
+        expr: Box<CompiledExpr>,
+        negated: bool,
+    },
+    In {
+        expr: Box<CompiledExpr>,
+        list: Vec<Value>,
+        negated: bool,
+    },
 }
 
 impl CompiledExpr {
@@ -328,6 +371,63 @@ impl CompiledExpr {
                     .collect::<Result<Vec<_>, _>>()?;
                 function.call(&args)
             }
+            CompiledExpr::Compare(left, op, right) => Ok(Value::Bool(compare(
+                *op,
+                &left.eval(record)?,
+                &right.eval(record)?,
+            ))),
+            CompiledExpr::And(left, right) => {
+                let l = logic_operand("and", &left.eval(record)?)?;
+                if l == Some(false) {
+                    return Ok(Value::Bool(false));
+                }
+                let r = logic_operand("and", &right.eval(record)?)?;
+                Ok(logic_result(match (l, r) {
+                    (_, Some(false)) => Some(false),
+                    (Some(true), r) => r,
+                    _ => None,
+                }))
+            }
+            CompiledExpr::Or(left, right) => {
+                let l = logic_operand("or", &left.eval(record)?)?;
+                if l == Some(true) {
+                    return Ok(Value::Bool(true));
+                }
+                let r = logic_operand("or", &right.eval(record)?)?;
+                Ok(logic_result(match (l, r) {
+                    (_, Some(true)) => Some(true),
+                    (Some(false), r) => r,
+                    _ => None,
+                }))
+            }
+            CompiledExpr::Not(inner) => Ok(logic_result(
+                logic_operand("not", &inner.eval(record)?)?.map(|b| !b),
+            )),
+            CompiledExpr::IsNull { expr, negated } => {
+                Ok(Value::Bool(expr.eval(record)?.is_null() != *negated))
+            }
+            CompiledExpr::In {
+                expr,
+                list,
+                negated,
+            } => {
+                let v = expr.eval(record)?;
+                Ok(Value::Bool(
+                    list.iter().any(|item| json_eq(&v, item)) != *negated,
+                ))
+            }
+        }
+    }
+
+    /// Evaluate as a predicate: `Ok(true)` only when the result is `true`.
+    /// `false` and `null` are `Ok(false)`; any other value is a type error.
+    pub fn eval_bool(&self, record: &Value) -> Result<bool, EvalError> {
+        match self.eval(record)? {
+            Value::Bool(b) => Ok(b),
+            Value::Null => Ok(false),
+            other => Err(EvalError::NotBool {
+                got: crate::eval::type_name(&other),
+            }),
         }
     }
 }

@@ -12,13 +12,23 @@
 //!   integer when both sides are integers, the exponent is non-negative, and
 //!   the result fits.
 //! - `+` on two strings concatenates.
+//! - Comparisons always yield a bool. `==` and `!=` compare numbers by value
+//!   (`1 == 1.0`) and everything else structurally, so `d.a == null` is true
+//!   for a missing `a`. `< <= > >=` order two numbers, two strings, or two
+//!   bools, and are false for any other pair (including `null`).
+//! - `x in [a, b]` is `x == a or x == b`; `is null` / `is not null` test for
+//!   `null` (or a missing path).
+//! - `and`, `or`, and `not` take bools and use three-valued logic for
+//!   `null`: `null and false` is `false`, `null or true` is `true`, anything
+//!   else involving `null` is `null`. They short-circuit, so the right side
+//!   of `false and ...` is not evaluated.
 //! - Anything else (e.g. `"abc" * 2`, dividing by zero, `sqrt(-1)`) is an
 //!   [`EvalError`]. Callers decide whether that becomes `null` or aborts.
 //!   JSON has no NaN or infinity, so results that aren't finite are errors.
 
-use crate::parser::ast::{BinaryOp, Num, Value as Literal};
+use crate::parser::ast::{BinaryOp, CompareOp, Num, Value as Literal};
 use serde_json::{Number, Value};
-use std::fmt;
+use std::{cmp::Ordering, fmt};
 use yajlish_ndjson::Selector;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +53,11 @@ pub enum EvalError {
     OutOfRange {
         func: &'static str,
     },
+    /// A predicate (e.g. a `filter` expression) produced something other than
+    /// a bool or `null`.
+    NotBool {
+        got: &'static str,
+    },
 }
 
 impl fmt::Display for EvalError {
@@ -64,6 +79,7 @@ impl fmt::Display for EvalError {
                 write!(f, "{}: cannot convert {:?}", func, input)
             }
             EvalError::OutOfRange { func } => write!(f, "{}: number out of range", func),
+            EvalError::NotBool { got } => write!(f, "expected a bool, got {}", got),
         }
     }
 }
@@ -241,6 +257,77 @@ fn numeric(op: BinaryOp, a: Num, b: Num) -> Result<Value, EvalError> {
     }
 }
 
+/// `left <op> right`; see the module docs.
+pub(crate) fn compare(op: CompareOp, left: &Value, right: &Value) -> bool {
+    match op {
+        CompareOp::Eq => json_eq(left, right),
+        CompareOp::Ne => !json_eq(left, right),
+        CompareOp::Lt => json_order(left, right) == Some(Ordering::Less),
+        CompareOp::Le => matches!(
+            json_order(left, right),
+            Some(Ordering::Less | Ordering::Equal)
+        ),
+        CompareOp::Gt => json_order(left, right) == Some(Ordering::Greater),
+        CompareOp::Ge => matches!(
+            json_order(left, right),
+            Some(Ordering::Greater | Ordering::Equal)
+        ),
+    }
+}
+
+/// Structural equality, except that numbers compare by value.
+pub(crate) fn json_eq(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(a), Value::Number(b)) => {
+            num_order(json_to_num(a), json_to_num(b)) == Some(Ordering::Equal)
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| json_eq(x, y))
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(k, x)| b.get(k).is_some_and(|y| json_eq(x, y)))
+        }
+        (a, b) => a == b,
+    }
+}
+
+/// The order of two numbers, two strings, or two bools; `None` otherwise.
+fn json_order(left: &Value, right: &Value) -> Option<Ordering> {
+    match (left, right) {
+        (Value::Number(a), Value::Number(b)) => num_order(json_to_num(a), json_to_num(b)),
+        (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+        (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
+        _ => None,
+    }
+}
+
+/// Integers compare exactly; a float on either side compares as `f64`.
+fn num_order(a: Num, b: Num) -> Option<Ordering> {
+    match as_int(a).zip(as_int(b)) {
+        Some((x, y)) => Some(x.cmp(&y)),
+        None => as_f64(a).partial_cmp(&as_f64(b)),
+    }
+}
+
+/// An operand of `and`, `or`, or `not`: a bool, or `None` for `null`.
+pub(crate) fn logic_operand(op: &'static str, v: &Value) -> Result<Option<bool>, EvalError> {
+    match v {
+        Value::Bool(b) => Ok(Some(*b)),
+        Value::Null => Ok(None),
+        other => Err(EvalError::Type {
+            op,
+            left: type_name(other),
+            right: None,
+        }),
+    }
+}
+
+pub(crate) fn logic_result(b: Option<bool>) -> Value {
+    b.map_or(Value::Null, Value::Bool)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +492,138 @@ mod tests {
                 left: "number",
                 right: None
             })
+        );
+    }
+    #[test]
+    fn test_comparisons() {
+        let r = json!({"i": 3, "f": 3.0, "s": "b", "t": true, "n": null, "arr": [1, 2.0]});
+        assert_eq!(ok("d.i == 3", r.clone()), json!(true));
+        assert_eq!(ok("d.i == d.f", r.clone()), json!(true));
+        assert_eq!(ok("d.i != 3.5", r.clone()), json!(true));
+        assert_eq!(ok("d.i < 3.5", r.clone()), json!(true));
+        assert_eq!(ok("d.i <= 3", r.clone()), json!(true));
+        assert_eq!(ok("d.i > -1", r.clone()), json!(true));
+        assert_eq!(ok("d.i >= 4", r.clone()), json!(false));
+        assert_eq!(ok("d.i * 2 > d.f + 2", r.clone()), json!(true));
+        assert_eq!(ok(r#"d.s > "a""#, r.clone()), json!(true));
+        assert_eq!(ok(r#"d.s == "b""#, r.clone()), json!(true));
+        assert_eq!(ok("d.t > false", r.clone()), json!(true));
+        assert_eq!(ok("d.t == true", r.clone()), json!(true));
+        assert_eq!(ok("d.arr == d.arr", r.clone()), json!(true));
+        // big integers compare exactly
+        let big = json!({"a": u64::MAX, "b": i64::MIN});
+        assert_eq!(ok("d.a > d.a - 1", big.clone()), json!(true));
+        assert_eq!(ok("d.b < 0", big), json!(true));
+    }
+
+    #[test]
+    fn test_comparing_mismatched_types() {
+        let r = json!({"i": 3, "s": "3", "n": null});
+        // ordering across types is false either way
+        assert_eq!(ok("d.s < d.i", r.clone()), json!(false));
+        assert_eq!(ok("d.s >= d.i", r.clone()), json!(false));
+        assert_eq!(ok("d.n < 1", r.clone()), json!(false));
+        assert_eq!(ok("d.n >= 1", r.clone()), json!(false));
+        // and equality is false
+        assert_eq!(ok("d.s == d.i", r.clone()), json!(false));
+        assert_eq!(ok("d.s != d.i", r.clone()), json!(true));
+        // null is equal only to null (or a missing path)
+        assert_eq!(ok("d.n == null", r.clone()), json!(true));
+        assert_eq!(ok("d.missing == null", r.clone()), json!(true));
+        assert_eq!(ok("d.i == null", r.clone()), json!(false));
+        assert_eq!(ok("d.i != null", r), json!(true));
+    }
+
+    #[test]
+    fn test_is_null_and_in() {
+        let r = json!({"a": null, "s": "WI", "i": 2});
+        assert_eq!(ok("d.a is null", r.clone()), json!(true));
+        assert_eq!(ok("d.missing is null", r.clone()), json!(true));
+        assert_eq!(ok("d.s is not null", r.clone()), json!(true));
+        assert_eq!(ok(r#"d.s in ["MN", "WI"]"#, r.clone()), json!(true));
+        assert_eq!(ok(r#"d.s not in ["MN", "WI"]"#, r.clone()), json!(false));
+        assert_eq!(ok("d.i in [1, 2.0]", r.clone()), json!(true));
+        assert_eq!(ok("d.i + 1 in [3]", r.clone()), json!(true));
+        assert_eq!(ok("d.a in [null]", r.clone()), json!(true));
+        assert_eq!(ok(r#"d.a in ["x"]"#, r.clone()), json!(false));
+        assert_eq!(ok("d.i in []", r), json!(false));
+    }
+
+    #[test]
+    fn test_and_or_not() {
+        let r = json!({"t": true, "f": false, "n": null, "i": 1});
+        assert_eq!(ok("d.t and d.t", r.clone()), json!(true));
+        assert_eq!(ok("d.t and d.f", r.clone()), json!(false));
+        assert_eq!(ok("d.f or d.t", r.clone()), json!(true));
+        assert_eq!(ok("d.f or d.f", r.clone()), json!(false));
+        assert_eq!(ok("not d.f", r.clone()), json!(true));
+        assert_eq!(ok("d.i == 1 and not d.f", r.clone()), json!(true));
+        // three-valued logic
+        assert_eq!(ok("d.n and d.f", r.clone()), json!(false));
+        assert_eq!(ok("d.f and d.n", r.clone()), json!(false));
+        assert_eq!(ok("d.n and d.t", r.clone()), Value::Null);
+        assert_eq!(ok("d.n or d.t", r.clone()), json!(true));
+        assert_eq!(ok("d.t or d.n", r.clone()), json!(true));
+        assert_eq!(ok("d.n or d.f", r.clone()), Value::Null);
+        assert_eq!(ok("not d.n", r), Value::Null);
+    }
+
+    #[test]
+    fn test_and_or_short_circuit() {
+        let r = json!({"zero": 0, "s": "x"});
+        // the right side would be an error
+        assert_eq!(
+            ok("d.zero != 0 and 1 / d.zero > 1", r.clone()),
+            json!(false)
+        );
+        assert_eq!(ok("d.zero == 0 or d.s * 2", r.clone()), json!(true));
+        assert_eq!(
+            eval("d.zero == 0 and 1 / d.zero > 1", r),
+            Err(EvalError::DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn test_logic_needs_bools() {
+        let r = json!({"i": 1, "s": "x"});
+        assert_eq!(
+            eval("d.i and true", r.clone()),
+            Err(EvalError::Type {
+                op: "and",
+                left: "number",
+                right: None
+            })
+        );
+        assert_eq!(
+            eval("false or d.s", r.clone()),
+            Err(EvalError::Type {
+                op: "or",
+                left: "string",
+                right: None
+            })
+        );
+        assert_eq!(
+            eval("not d.s", r),
+            Err(EvalError::Type {
+                op: "not",
+                left: "string",
+                right: None
+            })
+        );
+    }
+
+    #[test]
+    fn test_eval_bool() {
+        let registry = FunctionRegistry::default();
+        let r = json!({"a": 1, "n": null});
+        let pred = |src: &str| registry.compile(src).unwrap().eval_bool(&r);
+        assert_eq!(pred("d.a == 1"), Ok(true));
+        assert_eq!(pred("d.a == 2"), Ok(false));
+        assert_eq!(pred("d.n and true"), Ok(false));
+        assert_eq!(pred("d.a + 1"), Err(EvalError::NotBool { got: "number" }));
+        assert_eq!(
+            EvalError::NotBool { got: "number" }.to_string(),
+            "expected a bool, got number"
         );
     }
 }

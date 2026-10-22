@@ -61,8 +61,8 @@ Every command in [01-commands.md](01-commands.md) is tagged with one of:
 - `OrderedNumber` derives `Ord` on the enum, so every `PosInt` sorts before
   every `NegInt`, which sorts before every `Float` (`-1 > 5`, `2.5 > 3`).
   This affects `sort`, `agg`, and `join` keys.
-- `filter` uses a separate nom-4 grammar in `ndjson-common` that only supports
-  `selector <op> literal`.
+- ~~`filter` uses a separate nom-4 grammar in `ndjson-common` that only supports
+  `selector <op> literal`.~~ Done: `filter` is on rmath-ast.
 - `ndjson-spatial` is still on clap 2, geo 0.14, gdal 0.7.
 - `rmath-ast` (now in `rmath-ast/` in this workspace) is parse-only
   (no evaluator), and its lexer has issues called out in
@@ -76,6 +76,7 @@ Every command in [01-commands.md](01-commands.md) is tagged with one of:
 2. **`select` (scalar)** — projection, computed fields, aliases, `*`, `-r` raw
    output. Deprecate `pick-field` as an alias.
 3. **`filter` on the new grammar** — boolean ops, keep old syntax working.
+   (Done.)
 4. **Streaming aggregates** — `select count(), sum(d.x)`; sorted `--by`;
    `--hash` opt-in. Deprecate `agg`.
 5. **External sort + merge join** — replace `sort`/`join` internals; keep hash

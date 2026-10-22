@@ -30,6 +30,23 @@ pub enum Expr {
     /// [`FunctionRegistry`](crate::registry::FunctionRegistry) after parsing.
     Call(String, Vec<Expr>),
     Negate(Box<Expr>),
+    /// `left <op> right`. Comparisons don't chain: `a < b < c` is a parse
+    /// error.
+    Compare(Box<Expr>, CompareOp, Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
+    Not(Box<Expr>),
+    /// `e is null` (`negated: false`) or `e is not null`.
+    IsNull {
+        expr: Box<Expr>,
+        negated: bool,
+    },
+    /// `e in [lit, ...]` or `e not in [...]`.
+    In {
+        expr: Box<Expr>,
+        list: Vec<Value>,
+        negated: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,4 +56,14 @@ pub enum BinaryOp {
     Div,
     Mul,
     Pow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompareOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
 }
