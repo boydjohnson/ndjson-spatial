@@ -14,11 +14,14 @@
 * limitations under the License.
 */
 
-use crate::common::{geojson_rstar_to_geojson_geometry, GeometryType};
+use crate::common::{index_geometry, GeometryType};
 use geojson::GeoJson;
-use geojson_rstar::Feature;
-use geos::{Geom, Geometry};
-use ndjson_common::{common::to_geo_json, error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
+use geos::Geom;
+use ndjson_common::{
+    common::{calculate_bounding_box_if_not_exists, to_geo_json},
+    error::NdJsonSpatialError,
+    ndjson::NdJsonGeojsonReader,
+};
 use rstar::{RTree, RTreeObject};
 use std::{
     convert::TryInto,
@@ -42,69 +45,21 @@ pub fn read_geojson_file(mut reference_file: File) -> Result<GeoJson, NdJsonSpat
 
 pub fn intersection(reference_file: File, geometry_type: &str) -> Result<(), NdJsonSpatialError> {
     let features = read_geojson_file(reference_file)?;
+    let geometry_type = GeometryType::from_str(geometry_type).ok_or_else(|| {
+        NdJsonSpatialError::Error(
+            "geo-type must be one of point, line, polygon, multipoint, multiline, multipolygon"
+                .to_string(),
+        )
+    })?;
     let tree = if let GeoJson::FeatureCollection(features) = features {
-        match GeometryType::from_str(geometry_type) {
-            Some(GeometryType::Point) => {
-                let points = features
-                    .features
-                    .into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .map(Feature::Point)
-                    .collect::<Vec<Feature>>();
-                RTree::bulk_load(points)
-            }
-            Some(GeometryType::Line) => {
-                let lines = features
-                    .features
-                    .into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .map(Feature::LineString)
-                    .collect::<Vec<Feature>>();
-                RTree::bulk_load(lines)
-            }
-            Some(GeometryType::Polygon) => {
-                let polygons = features
-                    .features
-                    .into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .map(Feature::Polygon)
-                    .collect::<Vec<Feature>>();
-                RTree::bulk_load(polygons)
-            }
-            Some(GeometryType::MultiPoint) => {
-                let m_points = features
-                    .features
-                    .into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .map(Feature::MultiPoint)
-                    .collect::<Vec<Feature>>();
-                RTree::bulk_load(m_points)
-            }
-            Some(GeometryType::MultiLine) => {
-                let m_lines = features
-                    .features
-                    .into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .map(Feature::MultiLineString)
-                    .collect::<Vec<Feature>>();
-                RTree::bulk_load(m_lines)
-            }
-            None => {
-                return Err(NdJsonSpatialError::Error(
-                    "geo-type must be one of point, line, polygon, multipoint, multiline"
-                        .to_string(),
-                ))
-            }
-            Some(GeometryType::MultiPolygon) => {
-                let m_polygons = features
-                    .features
-                    .into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .map(Feature::MultiPolygon)
-                    .collect::<Vec<Feature>>();
-                RTree::bulk_load(m_polygons)
-            }
-        }
+        let indexed = features
+            .features
+            .iter()
+            .filter_map(|f| f.geometry.as_ref())
+            .filter(|g| geometry_type.matches(&g.value))
+            .filter_map(index_geometry)
+            .collect();
+        RTree::bulk_load(indexed)
     } else {
         return Err(NdJsonSpatialError::Error(
             "Reference file was not a feature collection.".to_string(),
@@ -115,46 +70,27 @@ pub fn intersection(reference_file: File, geometry_type: &str) -> Result<(), NdJ
         match geojson {
             Ok(geojson) => {
                 if let GeoJson::Feature(feature) = geojson {
-                    let incoming: Option<Result<Geometry, _>> =
-                        feature.geometry.as_ref().map(|g| g.clone().try_into());
-
-                    let feat: Feature = feature
-                        .try_into()
-                        .map_err(|e| NdJsonSpatialError::Error(format!("Error {:?}", e)))?;
+                    let incoming = match feature.geometry.as_ref().and_then(index_geometry) {
+                        Some(incoming) => incoming,
+                        None => {
+                            writeln!(std::io::stderr(), "Error converting to geos types")
+                                .expect("Unable to write to stderr");
+                            continue;
+                        }
+                    };
 
                     let mut acc = vec![];
 
-                    for inter in tree.locate_in_envelope_intersecting(&feat.envelope()) {
-                        let g: Result<Geometry, _> =
-                            geojson_rstar_to_geojson_geometry(inter).try_into();
+                    for inter in tree.locate_in_envelope_intersecting(incoming.envelope()) {
+                        if let Ok(geos_geom) = incoming.data.intersection(&inter.data) {
+                            let geo_geometry: geo::Geometry<f64> = geos_geom.try_into()?;
 
-                        match (&incoming, &g) {
-                            (Some(Ok(first)), Ok(other)) => {
-                                if let Ok(geos_geom) = first.intersection(other) {
-                                    let geo_geometry: geo_types::Geometry<f64> =
-                                        geos_geom.try_into()?;
-
-                                    let mut feat: geojson::Feature = feat.clone().into();
-
-                                    let geo_json_value = to_geo_json(&geo_geometry);
-
-                                    feat.geometry = Some(geojson::Geometry::new(geo_json_value));
-
-                                    let feat: Feature = feat.try_into().map_err(|e| {
-                                        NdJsonSpatialError::Error(format!(
-                                            "Error converting from Geojson: {:?}",
-                                            e
-                                        ))
-                                    })?;
-
-                                    let feat: geojson::Feature = feat.into();
-                                    acc.push(feat);
-                                }
-                            }
-                            _ => {
-                                writeln!(std::io::stderr(), "Error converting to geos types")
-                                    .expect("Unable to write to stderr");
-                            }
+                            let mut feat = feature.clone();
+                            feat.geometry =
+                                Some(geojson::Geometry::new(to_geo_json(&geo_geometry)));
+                            feat.bbox = None;
+                            calculate_bounding_box_if_not_exists(&mut feat);
+                            acc.push(feat);
                         }
                     }
 

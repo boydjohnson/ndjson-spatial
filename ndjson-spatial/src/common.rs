@@ -14,9 +14,10 @@
 * limitations under the License.
 */
 
-use gdal::{errors::GdalError, vector::Geometry as GdalGeometry};
-use geojson::{Geometry, Value};
-use geojson_rstar::Feature;
+use geo::BoundingRect;
+use geojson::GeometryValue;
+use rstar::primitives::{GeomWithData, Rectangle};
+use std::convert::TryFrom;
 
 pub enum GeometryType {
     Point,
@@ -39,21 +40,37 @@ impl GeometryType {
             _ => None,
         }
     }
+
+    pub fn matches(&self, value: &GeometryValue) -> bool {
+        matches!(
+            (self, value),
+            (GeometryType::Point, GeometryValue::Point { .. })
+                | (GeometryType::Line, GeometryValue::LineString { .. })
+                | (GeometryType::Polygon, GeometryValue::Polygon { .. })
+                | (GeometryType::MultiPoint, GeometryValue::MultiPoint { .. })
+                | (
+                    GeometryType::MultiLine,
+                    GeometryValue::MultiLineString { .. }
+                )
+                | (
+                    GeometryType::MultiPolygon,
+                    GeometryValue::MultiPolygon { .. }
+                )
+        )
+    }
 }
 
-pub fn geojson_to_gdal(feature: &Feature) -> Result<GdalGeometry, GdalError> {
-    GdalGeometry::from_geojson(&geojson_rstar_to_geojson_geometry(feature).to_string())
-}
+/// A GEOS geometry stored in an `RTree` under its bounding rectangle.
+pub type IndexedGeometry = GeomWithData<Rectangle<[f64; 2]>, geos::Geometry>;
 
-pub fn geojson_rstar_to_geojson_geometry(feature: &Feature) -> Geometry {
-    let val = match feature {
-        Feature::Point(p) => Value::Point(p.point().to_owned()),
-        Feature::LineString(l) => Value::LineString(l.line().to_owned()),
-        Feature::MultiLineString(l) => Value::MultiLineString(l.lines().to_owned()),
-        Feature::Polygon(p) => Value::Polygon(p.polygon().to_owned()),
-        Feature::MultiPoint(p) => Value::MultiPoint(p.points().to_owned()),
-        Feature::MultiPolygon(p) => Value::MultiPolygon(p.polygons().to_owned()),
-        Feature::GeometryCollection(g) => Value::GeometryCollection(g.geometries().to_owned()),
-    };
-    Geometry::new(val)
+/// Converts a GeoJSON geometry for indexing. `None` if it is empty or
+/// GEOS can't represent it.
+pub fn index_geometry(geometry: &geojson::Geometry) -> Option<IndexedGeometry> {
+    let geo_geometry = geo::Geometry::<f64>::try_from(geometry).ok()?;
+    let rect = geo_geometry.bounding_rect()?;
+    let geos_geometry = geos::Geometry::try_from(&geo_geometry).ok()?;
+    Some(GeomWithData::new(
+        Rectangle::from_corners(rect.min().x_y().into(), rect.max().x_y().into()),
+        geos_geometry,
+    ))
 }

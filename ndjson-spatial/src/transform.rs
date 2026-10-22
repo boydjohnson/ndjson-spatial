@@ -14,14 +14,15 @@
 * limitations under the License.
 */
 
-use crate::common::geojson_to_gdal;
-use gdal::spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef};
-use geojson_rstar::Feature;
-use ndjson_common::{error::NdJsonSpatialError, ndjson::NdJsonGeojsonReader};
-use std::{
-    convert::TryInto,
-    io::{BufRead, Write},
+use gdal::{
+    spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef},
+    vector::Geometry as GdalGeometry,
 };
+use ndjson_common::{
+    common::calculate_bounding_box_if_not_exists, error::NdJsonSpatialError,
+    ndjson::NdJsonGeojsonReader,
+};
+use std::io::{BufRead, Write};
 
 pub enum CrsSpecification {
     Epsg(u32),
@@ -39,23 +40,25 @@ pub fn transform<R: BufRead, W: Write>(
     let crs_trans = create_transform(&from, &to)?;
 
     for line in reader {
-        if let geojson::GeoJson::Feature(feature) =
+        if let geojson::GeoJson::Feature(mut feat) =
             line.map_err(|e| NdJsonSpatialError::Error(format!("Error reading Geojson: {:?}", e)))?
         {
-            let feat: Feature = match feature.try_into().map_err(|e| {
-                NdJsonSpatialError::Error(format!("Error converting from Geojson: {:?}", e))
-            }) {
-                Ok(f) => f,
-                Err(err) => {
-                    writeln!(std::io::stderr(), "{:?}", err).expect("Unable to write to stderr");
+            let geometry = match feat.geometry.as_ref() {
+                Some(g) => g,
+                None => {
+                    writeln!(
+                        std::io::stderr(),
+                        "Error converting from Geojson: feature has no geometry"
+                    )
+                    .expect("Unable to write to stderr");
                     continue;
                 }
             };
-            let gdal_geometry = geojson_to_gdal(&feat);
 
-            let mut gdal_geometry = gdal_geometry.map_err(|e| {
-                NdJsonSpatialError::Error(format!("Error converting to Gdal: {}", e))
-            })?;
+            let mut gdal_geometry =
+                GdalGeometry::from_geojson(&geometry.to_string()).map_err(|e| {
+                    NdJsonSpatialError::Error(format!("Error converting to Gdal: {}", e))
+                })?;
 
             gdal_geometry
                 .transform_inplace(&crs_trans)
@@ -81,15 +84,10 @@ pub fn transform<R: BufRead, W: Write>(
                 }
             };
 
-            let mut feat: geojson::Feature = feat.into();
-
             feat.geometry = Some(geometry);
-
-            let feat: Feature = feat.try_into().map_err(|e| {
-                NdJsonSpatialError::Error(format!("Error converting from Geojson: {:?}", e))
-            })?;
-
-            let feat: geojson::Feature = feat.into();
+            // Any incoming bbox is in the source CRS.
+            feat.bbox = None;
+            calculate_bounding_box_if_not_exists(&mut feat);
 
             if let Err(e) = writeln!(writer, "{}", feat) {
                 writeln!(std::io::stderr(), "{}", e).expect("Unable to write to stderr");
@@ -126,4 +124,31 @@ fn create_transform(
 
     CoordTransform::new(&f, &t)
         .map_err(|e| NdJsonSpatialError::Error(format!("Error creating tranform: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transform_point_to_web_mercator() {
+        let input = r#"{"type":"Feature","properties":{"a":1},"geometry":{"type":"Point","coordinates":[-93.0,45.0]}}"#;
+        let mut out = vec![];
+        transform(
+            input.as_bytes(),
+            CrsSpecification::Epsg(4326),
+            CrsSpecification::Epsg(3857),
+            &mut out,
+        )
+        .expect("transform succeeds");
+        let feat: geojson::Feature = std::str::from_utf8(&out)
+            .expect("utf-8")
+            .trim()
+            .parse()
+            .expect("valid feature");
+        let bbox = feat.bbox.expect("bbox recomputed");
+        assert!((bbox[0] - -10_352_712.64).abs() < 1.0, "{:?}", bbox);
+        assert!((bbox[1] - 5_621_521.49).abs() < 1.0, "{:?}", bbox);
+        assert_eq!(feat.properties.expect("properties")["a"], 1);
+    }
 }

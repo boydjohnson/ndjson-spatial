@@ -26,6 +26,13 @@ impl From<geos::Error> for NdJsonSpatialError {
     }
 }
 
+#[cfg(feature = "spatial")]
+impl From<geojson::Error> for NdJsonSpatialError {
+    fn from(other: geojson::Error) -> Self {
+        NdJsonSpatialError::Error(format!("GeoJson Error: {}", other))
+    }
+}
+
 impl From<std::convert::Infallible> for NdJsonSpatialError {
     fn from(_: std::convert::Infallible) -> Self {
         panic!("Error is Infallible")
