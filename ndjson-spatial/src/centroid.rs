@@ -25,7 +25,7 @@ pub fn compute_centroid() {
             Ok(geojson) => {
                 let geo_json = match calculate_centroid_from_geojson(geojson) {
                     Ok((mut feat, point)) => {
-                        let p: geojson::Value = (&point).into();
+                        let p: geojson::GeometryValue = (&point).into();
                         let g = Geometry::new(p);
                         feat.geometry.replace(g);
                         GeoJson::Feature(feat)
@@ -62,14 +62,14 @@ fn calculate_centroid_from_geojson(
         let geometry = geometry.cloned().expect("already checked if None");
 
         match geometry.value {
-            geojson::Value::MultiPolygon(multi) => {
-                let p: geo_types::MultiPolygon<f64> = geojson::Value::MultiPolygon(multi).try_into().expect("failed to convert geojson");
+            geojson::GeometryValue::MultiPolygon { .. } => {
+                let p: geo_types::MultiPolygon<f64> = geometry.try_into().expect("failed to convert geojson");
                 p.centroid().ok_or_else(|| {
                     NdJsonSpatialError::Error("Unable to compute centroid".to_string())
                 }).map(|p| (feat, p))
             },
-            geojson::Value::Polygon(poly) => {
-                let p: geo_types::Polygon<f64> = geojson::Value::Polygon(poly).try_into().expect("failed to convert geojson");
+            geojson::GeometryValue::Polygon { .. } => {
+                let p: geo_types::Polygon<f64> = geometry.try_into().expect("failed to convert geojson");
                 p.centroid().ok_or_else(|| {
                     NdJsonSpatialError::Error("Unable to compute centroid".to_string())
                 }).map(|p| (feat, p))
