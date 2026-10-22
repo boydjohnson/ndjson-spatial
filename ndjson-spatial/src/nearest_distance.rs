@@ -32,6 +32,12 @@ fn point_coordinates(value: &GeometryValue) -> Option<[f64; 2]> {
     }
 }
 
+/// Euclidean distance from `point` to the nearest point in `tree`.
+fn nearest_point_distance(tree: &RTree<[f64; 2]>, point: [f64; 2]) -> Option<f64> {
+    tree.nearest_neighbor(point)
+        .map(|nearest| nearest.distance_2(&point).sqrt())
+}
+
 pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialError> {
     let mut geojson_string = String::new();
 
@@ -70,12 +76,11 @@ pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialErr
                             ))
                         }
                     };
-                    let nearest = tree.nearest_neighbor(point).ok_or_else(|| {
+                    let distance = nearest_point_distance(&tree, point).ok_or_else(|| {
                         NdJsonSpatialError::Error(
                             "Missing nearest neighbor for point. Did reference file contain geojson points".to_string(),
                         )
                     })?;
-                    let distance = nearest.distance_2(&point);
 
                     let number = serde_json::Number::from_f64(distance).ok_or_else(|| {
                         NdJsonSpatialError::Error(
@@ -94,4 +99,21 @@ pub fn nearest_distance(mut reference_file: File) -> Result<(), NdJsonSpatialErr
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nearest_point_distance_is_not_squared() {
+        let tree = RTree::bulk_load(vec![[0.0, 0.0], [10.0, 10.0]]);
+        assert_eq!(nearest_point_distance(&tree, [3.0, 4.0]), Some(5.0));
+    }
+
+    #[test]
+    fn test_nearest_point_distance_empty_tree() {
+        let tree: RTree<[f64; 2]> = RTree::new();
+        assert_eq!(nearest_point_distance(&tree, [3.0, 4.0]), None);
+    }
 }
