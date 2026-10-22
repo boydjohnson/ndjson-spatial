@@ -52,7 +52,8 @@ Every command in [01-commands.md](01-commands.md) is tagged with one of:
 
 ## Current-state findings (from reading the code)
 
-- `sort` collects the whole stream (`sorted_by`) — S∞.
+- ~~`sort` collects the whole stream (`sorted_by`) — S∞.~~ Done: `sort` is an
+  external merge sort.
 - `agg` sorts the whole stream to group it — S∞, and only one aggregate per run.
 - `join` builds a map from the reference file per `--ref-fields` entry but
   reuses one reader, so only the first field sees data; and multiple field
@@ -80,7 +81,7 @@ Every command in [01-commands.md](01-commands.md) is tagged with one of:
 4. **Streaming aggregates** — `select count(), sum(d.x)`; sorted `--by`;
    `--hash` opt-in. Deprecate `agg`.
 5. **External sort + merge join** — replace `sort`/`join` internals; keep hash
-   join behind `--ref`.
+   join behind `--ref`. (External sort done; merge join next.)
 6. **Small S0/S1 commands** — `head`, `tail`, `sample`, `uniq`, `top`,
    `explode`, `flatten`, `to-csv`, `describe`.
 7. **Spatial** — spatial functions in expressions; S0 geometry commands;

@@ -17,15 +17,17 @@
 use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use ndjson::{
     aggregate::{aggregate, Aggregation},
-    filter, from_json, head, join, pick_field, tail,
+    filter, from_json, head, join, pick_field, sort, tail,
 };
 use ndjson_common::{
     error::NdJsonSpatialError,
     json_selector_parser::{parse_json_selector, Selector},
 };
+use rmath_ast::FunctionRegistry;
 use std::{
     fs::File,
     io::{stdin, stdout, BufReader, BufWriter, Write},
+    path::PathBuf,
     process::exit,
 };
 
@@ -224,46 +226,7 @@ fn main() {
             writeln!(std::io::stderr(), "Error: {:?}", e).expect("Unable to write to stderr");
         }
     } else if let Some(args) = args.subcommand_matches("sort") {
-        if let Some(fields) = args
-            .get_many::<String>("fields")
-            .map(|v| v.map(String::as_str))
-        {
-            let selectors = match fields
-                .map(|f| {
-                    if let Some((selector, sort_order)) = f.split_once(':') {
-                        match parse_json_selector(selector.into()) {
-                            Ok((_, selectors)) => Ok((selectors, parse_sort_order(sort_order))),
-                            Err(e) => Err(NdJsonSpatialError::Error(format!(
-                                "Failed to parse selector: {}: {}",
-                                selector, e
-                            ))),
-                        }
-                    } else {
-                        match parse_json_selector(f.into()) {
-                            Ok((_, selectors)) => Ok((selectors, true)),
-                            Err(e) => Err(NdJsonSpatialError::Error(format!(
-                                "Failed to parse selector: {}: {}",
-                                f, e
-                            ))),
-                        }
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()
-            {
-                Ok(selectors) => selectors,
-                Err(e) => {
-                    eprintln!("{:?}", e);
-                    std::process::exit(1);
-                }
-            };
-
-            let input = BufReader::with_capacity(2000, std::io::stdin());
-
-            if let Err(e) = ndjson::sort::sort(input, &mut std::io::stdout(), selectors) {
-                eprintln!("{:?}", e);
-                std::process::exit(1);
-            }
-        }
+        exit(run_sort(args));
     } else if let Some(args) = args.subcommand_matches("head") {
         let n = *args.get_one::<usize>("lines").expect("lines has a default");
         let mut output = BufWriter::new(stdout().lock());
@@ -281,15 +244,60 @@ fn main() {
     }
 }
 
-fn parse_sort_order(s: &str) -> bool {
-    match s {
-        "asc" => true,
-        "a" => true,
-        "desc" => false,
-        "d" => false,
-        a => {
-            eprintln!("expected 'asc', 'a', 'desc' or 'd' found {}", a);
-            std::process::exit(1);
+fn run_sort(args: &ArgMatches) -> i32 {
+    let registry = FunctionRegistry::default();
+    let keys = match args
+        .get_many::<String>("keys")
+        .expect("keys are required")
+        .map(|k| sort::SortKey::parse(&registry, k))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(keys) => keys,
+        Err(NdJsonSpatialError::Error(e)) => {
+            eprintln!("sort: {}", e);
+            return 2;
+        }
+    };
+    let unique = args.get_flag("unique");
+    let mut input = BufReader::with_capacity(1 << 20, stdin().lock());
+
+    if args.get_flag("check") {
+        return match sort::check(&mut input, &keys, unique) {
+            Ok(None) => 0,
+            Ok(Some(n)) => {
+                eprintln!("sort: disorder at record {}", n);
+                1
+            }
+            Err(NdJsonSpatialError::Error(e)) => {
+                eprintln!("sort: {}", e);
+                2
+            }
+        };
+    }
+
+    let mut options = sort::SortOptions::new(keys);
+    options.unique = unique;
+    options.buffer_size = *args.get_one::<usize>("buffer-size").expect("has a default");
+    options.batch_size = *args.get_one::<u32>("batch-size").expect("has a default") as usize;
+    options.temp_dir = args.get_one::<PathBuf>("temp-dir").cloned();
+
+    let mut output = BufWriter::with_capacity(1 << 20, stdout().lock());
+    match sort::sort(&mut input, &mut output, &options) {
+        Ok(summary) => {
+            if let Some((n, e)) = summary.first_key_error {
+                eprintln!(
+                    "sort: {} record{} had a key that failed to evaluate and sorted as null (first at record {}: {})",
+                    summary.key_errors,
+                    if summary.key_errors == 1 { "" } else { "s" },
+                    n,
+                    e
+                );
+            }
+            0
+        }
+        Err(NdJsonSpatialError::Error(e)) => {
+            eprintln!("sort: {}", e);
+            2
         }
     }
 }
@@ -382,16 +390,64 @@ fn parse_args() -> ArgMatches {
         )
         .subcommand(
             Command::new("sort")
-                .about("Sort by ndjson fields")
+                .about("Sorts records by one or more keys, spilling to disk when needed")
+                .long_about(
+                    "Sorts records by one or more keys. Records are buffered in memory up to \
+                     --buffer-size, then sorted runs are written to temporary files and merged. \
+                     The sort is stable and records are written out unchanged. Keys order as \
+                     null < false < true < numbers < strings < arrays < objects; a missing \
+                     field is null.",
+                )
                 .arg(
-                    Arg::new("fields")
-                        .short('f')
-                        .long("fields")
-                        .help("Selector for fields to sort by. e.g. -f d.property_value or -f d.property_value:d")
+                    Arg::new("keys")
+                        .short('k')
+                        .long("key")
+                        .short_alias('f')
+                        .alias("fields")
+                        .help("Expression to sort by, with :d for descending. e.g. -k d.state -k 'tolower(d.name)' -k d.pop:d")
                         .num_args(1..)
                         .action(ArgAction::Append)
-                        .value_name("selector")
+                        .value_name("expr")
                         .required(true),
+                )
+                .arg(
+                    Arg::new("buffer-size")
+                        .short('S')
+                        .long("buffer-size")
+                        .value_name("size")
+                        .default_value("256M")
+                        .value_parser(sort::parse_size)
+                        .help("Memory for records before spilling to disk: bytes, or with a K, M, G or T suffix"),
+                )
+                .arg(
+                    Arg::new("temp-dir")
+                        .short('T')
+                        .long("temporary-directory")
+                        .value_name("dir")
+                        .value_parser(clap::value_parser!(PathBuf))
+                        .help("Directory for temporary run files [default: $TMPDIR]"),
+                )
+                .arg(
+                    Arg::new("batch-size")
+                        .long("batch-size")
+                        .value_name("n")
+                        .default_value("64")
+                        .value_parser(clap::value_parser!(u32).range(2..))
+                        .help("Most runs to merge at once"),
+                )
+                .arg(
+                    Arg::new("unique")
+                        .short('u')
+                        .long("unique")
+                        .action(ArgAction::SetTrue)
+                        .help("Output only the first of records with equal keys"),
+                )
+                .arg(
+                    Arg::new("check")
+                        .short('c')
+                        .long("check")
+                        .action(ArgAction::SetTrue)
+                        .help("Only check that the input is sorted; exit 1 at the first record out of order"),
                 ),
         )
         .subcommand(

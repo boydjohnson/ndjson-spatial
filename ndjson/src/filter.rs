@@ -135,7 +135,7 @@ fn legacy_expression(expression: &str) -> Option<Expr> {
     ))
 }
 
-fn legacy_selector(selector: &str) -> Option<Vec<Selector>> {
+pub(crate) fn legacy_selector(selector: &str) -> Option<Vec<Selector>> {
     if let Ok(path) = SelectorParser::new().parse(selector) {
         return Some(path);
     }
