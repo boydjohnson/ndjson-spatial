@@ -79,8 +79,8 @@ Every command in [01-commands.md](01-commands.md) is tagged with one of:
 3. **`filter` on the new grammar** — boolean ops, keep old syntax working.
    (Done.)
 4. **Streaming aggregates** — `select count(), sum(d.x)`; sorted `--by`;
-   `--hash` opt-in. Deprecate `agg`. (Engine done and `agg` ported onto it;
-   `select` aggregate mode and sketches remain.)
+   `--hash` opt-in. Deprecate `agg`. (Done, including `select` aggregate
+   mode; sketches remain.)
 5. **External sort + merge join** — replace `sort`/`join` internals; keep hash
    join behind `--ref`. (External sort done; merge join next.)
 6. **Small S0/S1 commands** — `head`, `tail`, `sample`, `uniq`, `top`,

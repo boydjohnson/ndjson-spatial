@@ -22,25 +22,35 @@
 //! ndjson select '*, d.price * d.qty as total'
 //! ndjson select '* except (d.ssn, d.internal)'
 //! ndjson select -r 'd.person.gender' | sort | uniq -c
+//! ndjson select 'count() as n, sum(d.amount), max(d.amount), d.name'
+//! ndjson sort -k d.state | ndjson select 'd.state, count(), avg(d.salary)' --by d.state
 //! ```
 //!
 //! The list is parsed by rmath-ast's `SelectList` rule, so expressions are
 //! the same language `filter` uses. See `plans/02-select-and-expressions.md`
-//! for output naming and the output modes. Aggregate mode (`count()`,
-//! `--by`) is not handled here yet.
+//! for output naming and the output modes.
+//!
+//! A list that calls an aggregate (`count()`, `sum(d.x)`), or a run with
+//! `--by`, is in *aggregate mode*: it writes one record per group (see
+//! [`crate::group`]) instead of one per input record. Without `--by` the
+//! whole stream is one group.
 //!
 //! A missing path is `null`. An expression that fails to evaluate
 //! (`d.name * 2`) is written as `null` and counted in the returned
-//! [`SelectSummary`].
+//! [`SelectSummary`]; in aggregate mode the failing record is skipped by
+//! that aggregate.
 
-use crate::records::{for_each_record, write_record, Flow};
+use crate::{
+    group::{group_rows, AggregateSummary, Aggregation, Grouping},
+    records::{for_each_record, write_record, Flow},
+};
 use ndjson_common::{error::NdJsonSpatialError, json_selector_parser::Selector};
 use rmath_ast::{
     parser::{
         ast::{Expr, SelectItem, Term},
         math::SelectListParser,
     },
-    CompiledExpr, EvalError, FunctionRegistry,
+    AggregateList, CompiledExpr, EvalError, FunctionRegistry,
 };
 use serde_json::{Map, Value};
 use std::{collections::HashMap, io::BufRead, io::Write};
@@ -201,6 +211,54 @@ fn normalise_whitespace(text: &str) -> String {
     out
 }
 
+/// How aggregate mode groups records.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupOptions {
+    /// The group key expressions (`--by`); empty groups the whole stream.
+    pub by: Vec<Expr>,
+    /// How the input is grouped by `by`.
+    pub strategy: GroupStrategy,
+    /// Allow aggregates whose memory grows with the input
+    /// (`count_distinct`, `collect`).
+    pub allow_unbounded: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupStrategy {
+    /// The input is sorted by the key; out-of-order keys are an error.
+    Sorted,
+    /// Equal keys are adjacent, in any order. Not checked.
+    Grouped,
+    /// Any order; at most this many groups are kept in memory.
+    Hash { max_groups: usize },
+}
+
+impl Default for GroupOptions {
+    fn default() -> Self {
+        GroupOptions {
+            by: vec![],
+            strategy: GroupStrategy::Sorted,
+            allow_unbounded: false,
+        }
+    }
+}
+
+/// Parse a `--by` list: comma-separated expressions, without `as` or `*`.
+pub fn parse_by(src: &str) -> Result<Vec<Expr>, String> {
+    SelectListParser::new()
+        .parse(src)
+        .map_err(|e| format!("--by: parse error: {}", e))?
+        .into_iter()
+        .map(|item| match item {
+            SelectItem::Expr {
+                expr, alias: None, ..
+            } => Ok(expr),
+            SelectItem::Expr { .. } => Err("--by: keys can't be renamed with 'as'".to_string()),
+            SelectItem::Star { .. } => Err("--by: '*' can't be a key".to_string()),
+        })
+        .collect()
+}
+
 enum CompiledItem {
     Star { except: Vec<Vec<Selector>> },
     Expr { name: String, expr: CompiledExpr },
@@ -221,6 +279,9 @@ pub struct ItemErrors {
 #[derive(Debug, Default, PartialEq)]
 pub struct SelectSummary {
     pub errors: Vec<ItemErrors>,
+    /// Whether the list ran in aggregate mode, where a value that fails to
+    /// evaluate is skipped by its aggregate rather than written as `null`.
+    pub aggregate: bool,
 }
 
 /// Compile `list` and write the selected values of every record of `read`
@@ -231,7 +292,28 @@ pub fn ndjson_select<R: BufRead, W: Write>(
     read: &mut R,
     write: &mut W,
 ) -> Result<SelectSummary, NdJsonSpatialError> {
+    ndjson_select_grouped(list, mode, &GroupOptions::default(), read, write)
+}
+
+/// [`ndjson_select`], grouping by `options` when the list has aggregates
+/// or `options.by` isn't empty.
+pub fn ndjson_select_grouped<R: BufRead, W: Write>(
+    list: &SelectList,
+    mode: OutputMode,
+    options: &GroupOptions,
+    read: &mut R,
+    write: &mut W,
+) -> Result<SelectSummary, NdJsonSpatialError> {
     let registry = FunctionRegistry::default();
+    let is_aggregate = !options.by.is_empty()
+        || list.items.iter().any(|item| match item {
+            ParsedItem::Expr { expr, .. } => registry.contains_aggregate(expr),
+            ParsedItem::Star { .. } => false,
+        });
+    if is_aggregate {
+        return select_aggregate(&registry, list, mode, options, read, write);
+    }
+
     let items = list
         .items
         .iter()
@@ -282,6 +364,7 @@ pub fn ndjson_select<R: BufRead, W: Write>(
     crate::head::flush(write)?;
 
     Ok(SelectSummary {
+        aggregate: false,
         errors: errors
             .into_iter()
             .zip(texts)
@@ -292,6 +375,109 @@ pub fn ndjson_select<R: BufRead, W: Write>(
                     first,
                 })
             })
+            .collect(),
+    })
+}
+
+fn select_aggregate<R: BufRead, W: Write>(
+    registry: &FunctionRegistry,
+    list: &SelectList,
+    mode: OutputMode,
+    options: &GroupOptions,
+    read: &mut R,
+    write: &mut W,
+) -> Result<SelectSummary, NdJsonSpatialError> {
+    let error = |e: String| NdJsonSpatialError::Error(e);
+    let mut names = vec![];
+    let mut texts = vec![];
+    let mut exprs = vec![];
+    for item in &list.items {
+        match item {
+            ParsedItem::Star { .. } => {
+                return Err(error(
+                    "'*' can't be used with aggregates or --by".to_string(),
+                ))
+            }
+            ParsedItem::Expr { name, text, expr } => {
+                names.push(name.clone());
+                texts.push(text.as_str());
+                exprs.push(expr.clone());
+            }
+        }
+    }
+
+    let by = options
+        .by
+        .iter()
+        .map(|key| registry.resolve(key))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| error(format!("in --by: {}", e)))?;
+    let aggregates = AggregateList::compile(registry, &exprs, &options.by).map_err(|e| {
+        error(match e {
+            rmath_ast::ResolveError::Bare { item } => format!(
+                "in '{}': a field outside an aggregate must be a --by key, or the list must \
+                 have exactly one min() or max() to take it from; use first(), last(), \
+                 argmax() or argmin(), or add it to --by",
+                texts[item - 1]
+            ),
+            e => e.to_string(),
+        })
+    })?;
+    let unbounded = aggregates.unbounded_functions();
+    if !unbounded.is_empty() && !options.allow_unbounded {
+        return Err(error(format!(
+            "{} use{} memory that grows with the input; pass --allow-unbounded",
+            unbounded.join(", "),
+            if unbounded.len() == 1 { "s" } else { "" }
+        )));
+    }
+
+    let grouping = match (options.by.is_empty(), options.strategy) {
+        (true, _) => Grouping::Stream,
+        (false, GroupStrategy::Sorted) => Grouping::Sorted { check_order: true },
+        (false, GroupStrategy::Grouped) => Grouping::Sorted { check_order: false },
+        (false, GroupStrategy::Hash { max_groups }) => Grouping::Hash { max_groups },
+    };
+    let aggregation = Aggregation {
+        names,
+        list: aggregates,
+        by,
+        grouping,
+    };
+
+    let mut line = vec![];
+    let summary = group_rows(&aggregation, read, |values| {
+        let row = match mode {
+            OutputMode::Object => {
+                Row::Object(aggregation.names.iter().cloned().zip(values).collect())
+            }
+            OutputMode::Raw | OutputMode::Tsv => Row::Values(values),
+        };
+        line.clear();
+        write_row(&mut line, row, mode);
+        write_record(write, &line)
+    })
+    .map_err(|NdJsonSpatialError::Error(e)| {
+        let hint = if e.starts_with("more than") {
+            " (--max-groups)"
+        } else if e.contains("must be sorted") {
+            "; sort it first, or use --hash (or --grouped if equal keys are adjacent)"
+        } else {
+            ""
+        };
+        error(format!("{}{}", e.replace("group key", "--by key"), hint))
+    })?;
+    crate::head::flush(write)?;
+
+    let AggregateSummary { items, key, .. } = summary;
+    Ok(SelectSummary {
+        aggregate: true,
+        errors: items
+            .into_iter()
+            .zip(texts)
+            .filter_map(|(e, text)| e.map(|e| (text.to_string(), e)))
+            .chain(key.map(|e| ("--by".to_string(), e)))
+            .map(|(item, (count, first))| ItemErrors { item, count, first })
             .collect(),
     })
 }
@@ -686,5 +872,186 @@ mod tests {
             &mut output
         )
         .is_err());
+    }
+
+    const SALES: &str = concat!(
+        "{\"state\":\"IA\",\"amount\":5,\"name\":\"Ada\"}\n",
+        "{\"state\":\"MN\",\"amount\":2,\"name\":\"Grace\"}\n",
+        "{\"state\":\"MN\",\"amount\":\"n/a\",\"name\":\"Alan\"}\n",
+        "{\"state\":\"MN\",\"amount\":9,\"name\":\"Edsger\"}\n",
+    );
+
+    fn grouped(
+        list: &str,
+        mode: OutputMode,
+        by: &str,
+        strategy: GroupStrategy,
+        input: &str,
+    ) -> Result<(String, SelectSummary), NdJsonSpatialError> {
+        let list = parse_select_list(list, mode).unwrap();
+        let options = GroupOptions {
+            by: if by.is_empty() {
+                vec![]
+            } else {
+                parse_by(by).unwrap()
+            },
+            strategy,
+            allow_unbounded: false,
+        };
+        let mut output = vec![];
+        let summary =
+            ndjson_select_grouped(&list, mode, &options, &mut input.as_bytes(), &mut output)?;
+        Ok((String::from_utf8(output).unwrap(), summary))
+    }
+
+    #[test]
+    fn test_whole_stream_aggregates() {
+        let (output, summary) = grouped(
+            "count() as n, sum(d.amount), max(d.amount), d.name",
+            OutputMode::Object,
+            "",
+            GroupStrategy::Sorted,
+            SALES,
+        )
+        .unwrap();
+        // the bare d.name comes from the row holding the max
+        assert_eq!(
+            output,
+            "{\"n\":4,\"amount_sum\":16,\"amount_max\":9,\"name\":\"Edsger\"}\n"
+        );
+        assert!(summary.aggregate);
+        let items: Vec<_> = summary.errors.iter().map(|e| e.item.as_str()).collect();
+        assert_eq!(items, ["sum(d.amount)", "max(d.amount)", "d.name"]);
+        assert_eq!(summary.errors[0].first.0, 3);
+
+        // empty input still has one row
+        assert_eq!(
+            grouped(
+                "count(), sum(d.x)",
+                OutputMode::Object,
+                "",
+                GroupStrategy::Sorted,
+                ""
+            )
+            .unwrap()
+            .0,
+            "{\"count\":0,\"x_sum\":null}\n"
+        );
+    }
+
+    #[test]
+    fn test_grouped_aggregates() {
+        let expected = concat!(
+            "{\"state\":\"IA\",\"count\":1,\"total\":5}\n",
+            "{\"state\":\"MN\",\"count\":3,\"total\":11}\n",
+        );
+        for strategy in [
+            GroupStrategy::Sorted,
+            GroupStrategy::Grouped,
+            GroupStrategy::Hash { max_groups: 10 },
+        ] {
+            let (output, _) = grouped(
+                "d.state, count(), sum(d.amount) as total",
+                OutputMode::Object,
+                "d.state",
+                strategy,
+                SALES,
+            )
+            .unwrap();
+            assert_eq!(output, expected, "{:?}", strategy);
+        }
+        assert_eq!(
+            grouped(
+                "d.state, count()",
+                OutputMode::Tsv,
+                "d.state",
+                GroupStrategy::Sorted,
+                SALES
+            )
+            .unwrap()
+            .0,
+            "IA\t1\nMN\t3\n"
+        );
+        assert_eq!(
+            grouped(
+                "count()",
+                OutputMode::Raw,
+                "d.state",
+                GroupStrategy::Sorted,
+                SALES
+            )
+            .unwrap()
+            .0,
+            "1\n3\n"
+        );
+    }
+
+    #[test]
+    fn test_unsorted_by_is_an_error() {
+        let reversed: String = SALES.lines().rev().map(|l| format!("{}\n", l)).collect();
+        let err = grouped(
+            "d.state, count()",
+            OutputMode::Object,
+            "d.state",
+            GroupStrategy::Sorted,
+            &reversed,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            NdJsonSpatialError::Error(
+                "record 4: --by key \"IA\" sorts before the previous key \"MN\"; the input must \
+                 be sorted by the --by key; sort it first, or use --hash (or --grouped if equal \
+                 keys are adjacent)"
+                    .into()
+            )
+        );
+        let (output, _) = grouped(
+            "d.state, count()",
+            OutputMode::Object,
+            "d.state",
+            GroupStrategy::Hash { max_groups: 10 },
+            &reversed,
+        )
+        .unwrap();
+        assert_eq!(
+            output,
+            "{\"state\":\"IA\",\"count\":1}\n{\"state\":\"MN\",\"count\":3}\n"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_mode_errors() {
+        let err = |list: &str, by: &str| match grouped(
+            list,
+            OutputMode::Object,
+            by,
+            GroupStrategy::Sorted,
+            SALES,
+        ) {
+            Err(NdJsonSpatialError::Error(e)) => e,
+            Ok(_) => panic!("{} succeeded", list),
+        };
+        assert!(err("d.name, count()", "d.state").starts_with("in 'd.name': a field outside"));
+        assert!(err("sum(d.amount), d.name", "").starts_with("in 'd.name'"));
+        assert_eq!(
+            err("*, count()", ""),
+            "'*' can't be used with aggregates or --by"
+        );
+        assert_eq!(
+            err("collect(d.name)", ""),
+            "collect uses memory that grows with the input; pass --allow-unbounded"
+        );
+        assert_eq!(
+            err("sum(max(d.amount))", ""),
+            "max() can't be used inside the aggregate sum()"
+        );
+        assert_eq!(
+            err("d.state", "count()"),
+            "in --by: count() is an aggregate function and can't be used here"
+        );
+        assert!(parse_by("d.a as b").is_err());
+        assert!(parse_by("*").is_err());
+        assert_eq!(parse_by("d.a, floor(d.b / 2)").unwrap().len(), 2);
     }
 }
