@@ -21,7 +21,7 @@ Space classes are defined in [README.md](README.md#space-classes).
 | Command | Class | Status | Notes |
 |---------|-------|--------|-------|
 | `filter <expr>` | S0 | exists | Done: on the shared expression grammar, with `and`/`or`/`not`, computed comparisons (`d.a * 2 > d.b`), `in [..]`, `is null`, and function calls. Old `d.x == Virtual Currency` (unquoted string) syntax keeps working. Records that fail to evaluate are skipped and summarised on stderr. |
-| `select <exprs>` | S0 | new | Projection + computed fields + aliases + `*`. See [02](02-select-and-expressions.md). |
+| `select <exprs>` | S0 | exists | Done (scalar mode): projection, computed fields, `as` aliases, `*` / `* except (..)`, `-r/--raw`, `--tsv`. Keys keep select-list order; evaluation errors become `null` and are summarised on stderr. Not yet: aggregate mode, `--strict`. See [02](02-select-and-expressions.md). |
 | `pick-field <selector>` | S0 | deprecate | Alias for `select -r <selector>`. |
 | `explode <selector>` | S0 | new | One output record per element of an array field (`unnest`). `--keep-empty` emits one record with null. |
 | `flatten [--sep .]` | S0 | new | Nested objects → dotted keys; `unflatten` is the inverse. Useful before `to-csv`. |

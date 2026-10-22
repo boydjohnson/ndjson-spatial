@@ -58,6 +58,15 @@ ls -lh ../target/release-ndjson/ndjson
 ```
 
 ```bash
+    ndjson select <list> [-r | --tsv]
+
+    ndjson select 'd.name, d.price * d.qty as total, toupper(d.state) as state'
+    ndjson select '*, d.price * d.qty as total'
+    ndjson select '* except (d.ssn, d.internal)'
+    ndjson select -r 'd.person.gender' | sort | uniq -c
+```
+
+```bash
     ndjson pick-field <expression>
 
     ndjson pick-field "d.properties.distance "

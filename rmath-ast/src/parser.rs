@@ -59,8 +59,10 @@ pub(crate) fn unescape(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::math::{ExprParser, FloatParser, IntParser, NumParser, PosIntParser, TermParser};
-    use crate::parser::ast::{BinaryOp, CompareOp, Expr, Num, Term, Value};
+    use super::math::{
+        ExprParser, FloatParser, IntParser, NumParser, PosIntParser, SelectListParser, TermParser,
+    };
+    use crate::parser::ast::{BinaryOp, CompareOp, Expr, Num, SelectItem, Term, Value};
     use ordered_float::OrderedFloat;
     use yajlish_ndjson::Selector;
 
@@ -546,5 +548,80 @@ mod tests {
                 ]
             ))
         );
+    }
+
+    #[allow(clippy::boxed_local)] // built from the Box-returning helpers above
+    fn item(expr: Box<Expr>, alias: Option<&str>, span: (usize, usize)) -> SelectItem {
+        SelectItem::Expr {
+            expr: *expr,
+            alias: alias.map(Into::into),
+            span,
+        }
+    }
+
+    #[test]
+    fn test_select_list() {
+        assert_eq!(
+            SelectListParser::new().parse("d.name, d.price * d.qty as total"),
+            Ok(vec![
+                item(sel(&["name"]), None, (0, 6)),
+                item(
+                    Box::new(Expr::Op(sel(&["price"]), BinaryOp::Mul, sel(&["qty"]))),
+                    Some("total"),
+                    (8, 23)
+                ),
+            ])
+        );
+        assert_eq!(
+            SelectListParser::new().parse(r#"f(d.a, 1) as "a b""#),
+            Ok(vec![item(
+                call("f", vec![sel(&["a"]), num(Num::PosInt(1))]),
+                Some("a b"),
+                (0, 9)
+            )])
+        );
+        // `as` and `except` are still keys after a dot
+        assert_eq!(
+            SelectListParser::new().parse("d.as as except_"),
+            Ok(vec![item(sel(&["as"]), Some("except_"), (0, 4))])
+        );
+    }
+
+    #[test]
+    fn test_select_list_star() {
+        assert_eq!(
+            SelectListParser::new().parse("*, d.a + 1 as b"),
+            Ok(vec![
+                SelectItem::Star { except: vec![] },
+                item(
+                    Box::new(Expr::Op(sel(&["a"]), BinaryOp::Add, num(Num::PosInt(1)))),
+                    Some("b"),
+                    (3, 10)
+                ),
+            ])
+        );
+        assert_eq!(
+            SelectListParser::new().parse("* except (d.ssn, d.a.b[0])"),
+            Ok(vec![SelectItem::Star {
+                except: vec![
+                    vec![Selector::Identifier("ssn".into())],
+                    vec![
+                        Selector::Identifier("a".into()),
+                        Selector::Identifier("b".into()),
+                        Selector::Index(0)
+                    ],
+                ]
+            }])
+        );
+        assert!(SelectListParser::new().parse("* except ()").is_err());
+        assert!(SelectListParser::new().parse("* except (d.a + 1)").is_err());
+        assert!(SelectListParser::new().parse("* as all").is_err());
+    }
+
+    #[test]
+    fn test_select_list_rejects_empty_items() {
+        for bad in ["", "d.a,", ", d.a", "d.a,, d.b", "d.a as", "d.a as 1"] {
+            assert!(SelectListParser::new().parse(bad).is_err(), "{}", bad);
+        }
     }
 }
