@@ -9,7 +9,7 @@ path = "src/ndjson_spatial_main.rs"
 name = "ndjson-spatial"
 
 [dependencies]
-clap = "^2.33"
+clap = "4.6"
 gdal = "0.19"
 geo = "^0.14"
 geos = { version = "7.0.0", features = ["json", "geo"] }

@@ -14,7 +14,7 @@
 * limitations under the License.
 */
 
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{Arg, ArgAction, Command};
 use std::{fs::File, io::Write, process::exit};
 
 mod area;
@@ -29,13 +29,16 @@ mod transform;
 use transform::CrsSpecification;
 
 fn main() {
-    let args = parse_args();
+    let args = parse_args().get_matches();
 
     if let Some("nearest-distance") = args.subcommand_name() {
         let args = args
             .subcommand_matches("nearest-distance")
             .expect("subcommand was correctly tested for");
-        let filename = args.value_of("reference").expect("reference is required");
+        let filename = args
+            .get_one::<String>("reference")
+            .map(String::as_str)
+            .expect("reference is required");
 
         let reference_file = match File::open(filename) {
             Ok(r) => r,
@@ -59,10 +62,14 @@ fn main() {
         let args = args
             .subcommand_matches("intersection")
             .expect("subcommand was correctly tested for");
-        let filename = args.value_of("reference").expect("reference is required");
+        let filename = args
+            .get_one::<String>("reference")
+            .map(String::as_str)
+            .expect("reference is required");
 
         let geo_type = args
-            .value_of("geo-type")
+            .get_one::<String>("geo-type")
+            .map(String::as_str)
             .expect("geometry type is required");
 
         let reference_file = match File::open(filename) {
@@ -87,11 +94,12 @@ fn main() {
             .expect("subcommand was tested for");
 
         let field_name = args
-            .value_of("field-name")
+            .get_one::<String>("field-name")
+            .map(String::as_str)
             .expect("field-name is required")
             .into();
 
-        let bbox = args.is_present("bbox");
+        let bbox = args.get_flag("bbox");
 
         if let Err(e) = area::NdjsonSpatialArea::default().area(field_name, bbox) {
             writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
@@ -109,9 +117,15 @@ fn main() {
             .subcommand_matches("transform")
             .expect("The correct command is tranform");
 
-        let to = to_crs_specification(args.value_of("to-epsg"), args.value_of("to-proj4"));
+        let to = to_crs_specification(
+            args.get_one::<String>("to-epsg").map(String::as_str),
+            args.get_one::<String>("to-proj4").map(String::as_str),
+        );
 
-        let from = to_crs_specification(args.value_of("from-epsg"), args.value_of("from-proj4"));
+        let from = to_crs_specification(
+            args.get_one::<String>("from-epsg").map(String::as_str),
+            args.get_one::<String>("from-proj4").map(String::as_str),
+        );
 
         if let Err(e) = transform::transform(
             std::io::BufReader::new(std::io::stdin()),
@@ -138,137 +152,181 @@ fn to_crs_specification(epsg: Option<&str>, proj4: Option<&str>) -> CrsSpecifica
     }
 }
 
-fn parse_args<'a>() -> ArgMatches<'a> {
-    App::new("ndjson-spatial")
+fn parse_args() -> Command {
+    Command::new("ndjson-spatial")
         .about("computes spatial metrics on new-line delimited json")
         .subcommand(
-            SubCommand::with_name("nearest-distance")
+            Command::new("nearest-distance")
                 .about("compute the distance to the nearest point in 'reference' json file")
                 .arg(
-                    Arg::with_name("reference")
-                        .short("r")
+                    Arg::new("reference")
+                        .short('r')
                         .long("ref")
                         .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
+                        .num_args(1)
                         .help("The geojson file to search within for nearest point's distance"),
-                )
+                ),
         )
         .subcommand(
-            SubCommand::with_name("join-contains")
+            Command::new("join-contains")
                 .about("joins ndjson objects with contained points, lines, polygons, or multipolygons in a reference file")
                 .arg(
-                    Arg::with_name("reference")
-                        .short("r")
+                    Arg::new("reference")
+                        .short('r')
                         .long("ref")
                         .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("The geojson file to join on.")
+                        .num_args(1)
+                        .help("The geojson file to join on."),
                 )
                 .arg(
-                    Arg::with_name("field-name")
+                    Arg::new("field-name")
                         .long("field-name")
                         .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("The name of the field to store the contained objects")
-                )
-
+                        .num_args(1)
+                        .help("The name of the field to store the contained objects"),
+                ),
         )
         .subcommand(
-            SubCommand::with_name("centroid")
+            Command::new("centroid")
                 .about("compute the centroid of multipolygon or polygon ndjson stream"),
         )
+        .subcommand(Command::new("from-geojson").about("Convert geojson to ndjson"))
+        .subcommand(Command::new("to-geojson").about("Convert ndjson to geojson"))
         .subcommand(
-            SubCommand::with_name("from-geojson")
-                .about("Convert geojson to ndjson")
-        )
-        .subcommand(
-            SubCommand::with_name("to-geojson")
-                .about("Convert ndjson to geojson")
-        )
-        .subcommand(
-            SubCommand::with_name("intersection")
+            Command::new("intersection")
                 .about("compute the intersection with polygons in a reference file")
                 .arg(
-                    Arg::with_name("reference")
-                        .short("r")
+                    Arg::new("reference")
+                        .short('r')
                         .long("ref")
                         .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
+                        .num_args(1)
                         .help("The geojson file to search within for Geometry types"),
-                ).arg(
-                    Arg::with_name("geo-type")
-                        .short("g")
+                )
+                .arg(
+                    Arg::new("geo-type")
+                        .short('g')
                         .long("geo-type")
                         .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("The OGC Geometry type in the reference file")
-                )
+                        .num_args(1)
+                        .help("The OGC Geometry type in the reference file"),
+                ),
         )
         .subcommand(
-            SubCommand::with_name("area")
+            Command::new("area")
                 .about("compute the area of the shape represented in ndjson")
                 .arg(
-                    Arg::with_name("field-name")
-                        .short("f")
+                    Arg::new("field-name")
+                        .short('f')
                         .long("field-name")
                         .required(true)
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("what to name the area field")
+                        .num_args(1)
+                        .help("what to name the area field"),
                 )
                 .arg(
-                    Arg::with_name("bbox")
-                        .short("b")
+                    Arg::new("bbox")
+                        .short('b')
                         .long("bbox")
-                        .required(false)
-                        .takes_value(false)
-                        .help("Compute the bounding box if it does not exist")
-                )
+                        .action(ArgAction::SetTrue)
+                        .help("Compute the bounding box if it does not exist"),
+                ),
         )
         .subcommand(
-            SubCommand::with_name("transform")
+            Command::new("transform")
                 .about("transform the coordinate reference system")
                 .arg(
-                    Arg::with_name("from-epsg")
+                    Arg::new("from-epsg")
                         .long("from-epsg")
-                        .required_unless("from-proj4")
+                        .required_unless_present("from-proj4")
                         .conflicts_with("from-proj4")
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("The epsg that the geometry is in")
+                        .num_args(1)
+                        .help("The epsg that the geometry is in"),
                 )
                 .arg(
-                    Arg::with_name("to-epsg")
+                    Arg::new("to-epsg")
                         .long("to-epsg")
-                        .required_unless("to-proj4")
+                        .required_unless_present("to-proj4")
                         .conflicts_with("to-proj4")
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("The epsg the the geometry is tranformed to")
+                        .num_args(1)
+                        .help("The epsg the the geometry is tranformed to"),
                 )
                 .arg(
-                    Arg::with_name("from-proj4")
+                    Arg::new("from-proj4")
                         .long("from-proj4")
-                        .required_unless("from-epsg")
+                        .required_unless_present("from-epsg")
                         .conflicts_with("from-epsg")
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("The proj string the geometry is in")
+                        .num_args(1)
+                        .help("The proj string the geometry is in"),
                 )
                 .arg(
-                    Arg::with_name("to-proj4")
+                    Arg::new("to-proj4")
                         .long("to-proj4")
-                        .required_unless("to-epsg")
+                        .required_unless_present("to-epsg")
                         .conflicts_with("to-epsg")
-                        .takes_value(true)
-                        .number_of_values(1)
-                        .help("The proj string the geometry is transformed to")
-                )
+                        .num_args(1)
+                        .help("The proj string the geometry is transformed to"),
+                ),
         )
-        .get_matches()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_args;
+
+    #[test]
+    fn verify_cli() {
+        parse_args().debug_assert();
+    }
+
+    #[test]
+    fn transform_requires_one_of_each_crs() {
+        let cmd = parse_args;
+        assert!(cmd()
+            .try_get_matches_from(["ndjson-spatial", "transform", "--from-epsg", "4326"])
+            .is_err());
+        assert!(cmd()
+            .try_get_matches_from([
+                "ndjson-spatial",
+                "transform",
+                "--from-epsg",
+                "4326",
+                "--from-proj4",
+                "+proj=longlat",
+                "--to-epsg",
+                "3857",
+            ])
+            .is_err());
+        let m = cmd()
+            .try_get_matches_from([
+                "ndjson-spatial",
+                "transform",
+                "--from-epsg",
+                "4326",
+                "--to-proj4",
+                "+proj=merc",
+            ])
+            .expect("valid transform args");
+        let m = m.subcommand_matches("transform").expect("transform");
+        assert_eq!(
+            m.get_one::<String>("from-epsg").map(String::as_str),
+            Some("4326")
+        );
+        assert_eq!(
+            m.get_one::<String>("to-proj4").map(String::as_str),
+            Some("+proj=merc")
+        );
+    }
+
+    #[test]
+    fn area_bbox_is_a_flag() {
+        let m = parse_args()
+            .try_get_matches_from(["ndjson-spatial", "area", "-f", "a", "-b"])
+            .expect("valid area args");
+        let m = m.subcommand_matches("area").expect("area");
+        assert!(m.get_flag("bbox"));
+        assert_eq!(
+            m.get_one::<String>("field-name").map(String::as_str),
+            Some("a")
+        );
+    }
 }
