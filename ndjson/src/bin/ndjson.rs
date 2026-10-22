@@ -17,7 +17,7 @@
 use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use ndjson::{
     aggregate::{aggregate, Aggregation},
-    filter, from_json, join, pick_field,
+    filter, from_json, head, join, pick_field, tail,
 };
 use ndjson_common::{
     error::NdJsonSpatialError,
@@ -247,6 +247,20 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    } else if let Some(args) = args.subcommand_matches("head") {
+        let n = *args.get_one::<usize>("lines").expect("lines has a default");
+        let mut output = BufWriter::new(stdout().lock());
+        if let Err(e) = head::head(n, &mut stdin().lock(), &mut output) {
+            eprintln!("{:?}", e);
+            exit(1);
+        }
+    } else if let Some(args) = args.subcommand_matches("tail") {
+        let n = *args.get_one::<usize>("lines").expect("lines has a default");
+        let mut output = BufWriter::new(stdout().lock());
+        if let Err(e) = tail::tail(n, &mut stdin().lock(), &mut output) {
+            eprintln!("{:?}", e);
+            exit(1);
+        }
     }
 }
 
@@ -363,5 +377,25 @@ fn parse_args() -> ArgMatches {
                         .required(true),
                 ),
         )
+        .subcommand(
+            Command::new("head")
+                .about("Outputs the first n records")
+                .arg(lines_arg()),
+        )
+        .subcommand(
+            Command::new("tail")
+                .about("Outputs the last n records")
+                .arg(lines_arg()),
+        )
         .get_matches()
+}
+
+fn lines_arg() -> Arg {
+    Arg::new("lines")
+        .short('n')
+        .long("lines")
+        .value_name("n")
+        .default_value("10")
+        .value_parser(clap::value_parser!(usize))
+        .help("Number of records")
 }
