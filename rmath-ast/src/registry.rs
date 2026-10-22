@@ -5,8 +5,13 @@
 //! its arity, and produces a [`CompiledExpr`] that holds the function itself,
 //! so evaluation does no name lookups.
 //!
+//! Functions are either scalar (evaluated per record) or aggregate (an
+//! [`Accumulator`] fed every record, see [`crate::aggregate`]). `resolve`
+//! only accepts scalar calls; [`crate::aggregate::AggregateList::compile`]
+//! handles lists that contain aggregates.
+//!
 //! [`FunctionRegistry::default`] holds the built-in functions (see
-//! [`crate::builtins`]). Other crates add their own with
+//! [`crate::builtins`] and [`crate::aggregate`]). Other crates add their own with
 //! [`FunctionRegistry::register`], e.g. `ndjson-spatial`'s geometry
 //! functions.
 //!
@@ -27,6 +32,7 @@
 //! ```
 
 use crate::{
+    aggregate::{self, Accumulator},
     builtins,
     eval::{
         binary, compare, json_eq, literal_to_json, logic_operand, logic_result, negate, select,
@@ -44,6 +50,9 @@ use yajlish_ndjson::Selector;
 /// The implementation of a scalar function: evaluated arguments in, one
 /// value out.
 pub type ScalarFn = Arc<dyn Fn(&[Value]) -> Result<Value, EvalError> + Send + Sync>;
+
+/// Makes a fresh accumulator for an aggregate function.
+pub type AggregateFn = Arc<dyn Fn() -> Box<dyn Accumulator> + Send + Sync>;
 
 /// How many arguments a function takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,13 +96,26 @@ impl fmt::Display for Arity {
     }
 }
 
-/// What kind of function this is. Aggregates (`sum`, `count`, ...) will be a
-/// second variant with an accumulator factory.
+/// What kind of function this is.
 #[derive(Clone)]
 #[non_exhaustive]
 pub enum FunctionKind {
     /// Evaluated once per record from that record's values.
     Scalar(ScalarFn),
+    /// Folds every record of a group into an [`Accumulator`] and yields one
+    /// value at the end.
+    Aggregate(AggregateFn),
+}
+
+/// Which row an aggregate picks, for aggregates like `min` and `max` whose
+/// result comes from one record. A select list with exactly one of these
+/// evaluates its bare fields on that record (see [`AggregateList`]).
+///
+/// [`AggregateList`]: crate::aggregate::AggregateList
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Extreme {
+    Min,
+    Max,
 }
 
 /// A registered function.
@@ -102,6 +124,8 @@ pub struct Function {
     name: &'static str,
     arity: Arity,
     null_propagates: bool,
+    unbounded: bool,
+    extreme: Option<Extreme>,
     kind: FunctionKind,
 }
 
@@ -116,8 +140,41 @@ impl Function {
             name,
             arity,
             null_propagates: true,
+            unbounded: false,
+            extreme: None,
             kind: FunctionKind::Scalar(Arc::new(f)),
         }
+    }
+
+    /// An aggregate function. `new` makes the accumulator for one group; it
+    /// is fed every record's evaluated arguments, `null`s included.
+    pub fn aggregate<F>(name: &'static str, arity: Arity, new: F) -> Self
+    where
+        F: Fn() -> Box<dyn Accumulator> + Send + Sync + 'static,
+    {
+        Function {
+            name,
+            arity,
+            null_propagates: false,
+            unbounded: false,
+            extreme: None,
+            kind: FunctionKind::Aggregate(Arc::new(new)),
+        }
+    }
+
+    /// Mark an aggregate whose state grows with its input (`collect`,
+    /// `count_distinct`), so commands can refuse it without an explicit
+    /// opt-in.
+    pub fn unbounded(mut self) -> Self {
+        self.unbounded = true;
+        self
+    }
+
+    /// Mark an aggregate whose result is the first argument of the record
+    /// holding the minimum or maximum of that argument.
+    pub fn extreme(mut self, extreme: Extreme) -> Self {
+        self.extreme = Some(extreme);
+        self
     }
 
     /// Pass `null` arguments to the implementation instead of short-circuiting
@@ -139,13 +196,37 @@ impl Function {
         &self.kind
     }
 
-    /// Call the function on already-evaluated arguments.
-    pub fn call(&self, args: &[Value]) -> Result<Value, EvalError> {
-        if self.null_propagates && args.iter().any(Value::is_null) {
-            return Ok(Value::Null);
-        }
+    pub fn is_aggregate(&self) -> bool {
+        matches!(self.kind, FunctionKind::Aggregate(_))
+    }
+
+    pub fn is_unbounded(&self) -> bool {
+        self.unbounded
+    }
+
+    pub fn extreme_kind(&self) -> Option<Extreme> {
+        self.extreme
+    }
+
+    /// A fresh accumulator, or `None` for a scalar function.
+    pub fn accumulator(&self) -> Option<Box<dyn Accumulator>> {
         match &self.kind {
-            FunctionKind::Scalar(f) => f(args),
+            FunctionKind::Aggregate(new) => Some(new()),
+            FunctionKind::Scalar(_) => None,
+        }
+    }
+
+    /// Call a scalar function on already-evaluated arguments. Aggregates
+    /// can't be called this way and return [`EvalError::NotScalar`].
+    pub fn call(&self, args: &[Value]) -> Result<Value, EvalError> {
+        match &self.kind {
+            FunctionKind::Scalar(f) => {
+                if self.null_propagates && args.iter().any(Value::is_null) {
+                    return Ok(Value::Null);
+                }
+                f(args)
+            }
+            FunctionKind::Aggregate(_) => Err(EvalError::NotScalar { func: self.name }),
         }
     }
 }
@@ -156,6 +237,7 @@ impl fmt::Debug for Function {
             .field("name", &self.name)
             .field("arity", &self.arity)
             .field("null_propagates", &self.null_propagates)
+            .field("aggregate", &self.is_aggregate())
             .finish_non_exhaustive()
     }
 }
@@ -171,6 +253,7 @@ impl Default for FunctionRegistry {
     fn default() -> Self {
         let mut registry = FunctionRegistry::empty();
         builtins::register(&mut registry);
+        aggregate::register(&mut registry);
         registry
     }
 }
@@ -208,17 +291,42 @@ impl FunctionRegistry {
         Ok(self.resolve(&expr)?)
     }
 
-    /// Bind every call in `expr` to a registered function, checking arity.
+    /// Whether `expr` calls an aggregate function anywhere. Unknown
+    /// functions count as scalar (resolving reports them).
+    pub fn contains_aggregate(&self, expr: &Expr) -> bool {
+        let mut found = false;
+        visit(expr, &mut |e| {
+            if let Expr::Call(name, _) = e {
+                found |= self.get(name).is_some_and(|f| f.is_aggregate());
+            }
+        });
+        found
+    }
+
+    /// Bind every call in `expr` to a registered scalar function, checking
+    /// arity. Aggregate calls are [`ResolveError::Aggregate`].
     pub fn resolve(&self, expr: &Expr) -> Result<CompiledExpr, ResolveError> {
+        self.resolve_with(expr, &mut |_| None)
+    }
+
+    /// [`resolve`](Self::resolve), except that `hook` sees every node first
+    /// and can compile it itself by returning `Some`.
+    pub(crate) fn resolve_with(
+        &self,
+        expr: &Expr,
+        hook: &mut dyn FnMut(&Expr) -> Option<Result<CompiledExpr, ResolveError>>,
+    ) -> Result<CompiledExpr, ResolveError> {
+        if let Some(compiled) = hook(expr) {
+            return compiled;
+        }
+        let mut go = |e: &Expr| self.resolve_with(e, &mut *hook);
         Ok(match expr {
             Expr::Term(Term::Value(lit)) => CompiledExpr::Literal(literal_to_json(lit)),
             Expr::Term(Term::Selector(path)) => CompiledExpr::Select(path.clone()),
-            Expr::Negate(inner) => CompiledExpr::Negate(Box::new(self.resolve(inner)?)),
-            Expr::Op(left, op, right) => CompiledExpr::Op(
-                Box::new(self.resolve(left)?),
-                *op,
-                Box::new(self.resolve(right)?),
-            ),
+            Expr::Negate(inner) => CompiledExpr::Negate(Box::new(go(inner)?)),
+            Expr::Op(left, op, right) => {
+                CompiledExpr::Op(Box::new(go(left)?), *op, Box::new(go(right)?))
+            }
             Expr::Call(name, args) => {
                 let function = self
                     .get(name)
@@ -230,28 +338,22 @@ impl FunctionRegistry {
                         got: args.len(),
                     });
                 }
-                let args = args
-                    .iter()
-                    .map(|a| self.resolve(a))
-                    .collect::<Result<_, _>>()?;
+                if function.is_aggregate() {
+                    return Err(ResolveError::Aggregate {
+                        name: function.name,
+                    });
+                }
+                let args = args.iter().map(&mut go).collect::<Result<_, _>>()?;
                 CompiledExpr::Call(Arc::clone(function), args)
             }
-            Expr::Compare(left, op, right) => CompiledExpr::Compare(
-                Box::new(self.resolve(left)?),
-                *op,
-                Box::new(self.resolve(right)?),
-            ),
-            Expr::And(left, right) => CompiledExpr::And(
-                Box::new(self.resolve(left)?),
-                Box::new(self.resolve(right)?),
-            ),
-            Expr::Or(left, right) => CompiledExpr::Or(
-                Box::new(self.resolve(left)?),
-                Box::new(self.resolve(right)?),
-            ),
-            Expr::Not(inner) => CompiledExpr::Not(Box::new(self.resolve(inner)?)),
+            Expr::Compare(left, op, right) => {
+                CompiledExpr::Compare(Box::new(go(left)?), *op, Box::new(go(right)?))
+            }
+            Expr::And(left, right) => CompiledExpr::And(Box::new(go(left)?), Box::new(go(right)?)),
+            Expr::Or(left, right) => CompiledExpr::Or(Box::new(go(left)?), Box::new(go(right)?)),
+            Expr::Not(inner) => CompiledExpr::Not(Box::new(go(inner)?)),
             Expr::IsNull { expr, negated } => CompiledExpr::IsNull {
-                expr: Box::new(self.resolve(expr)?),
+                expr: Box::new(go(expr)?),
                 negated: *negated,
             },
             Expr::In {
@@ -259,11 +361,26 @@ impl FunctionRegistry {
                 list,
                 negated,
             } => CompiledExpr::In {
-                expr: Box::new(self.resolve(expr)?),
+                expr: Box::new(go(expr)?),
                 list: list.iter().map(literal_to_json).collect(),
                 negated: *negated,
             },
         })
+    }
+}
+
+/// Calls `f` on `expr` and every expression inside it.
+pub(crate) fn visit<'a>(expr: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
+    f(expr);
+    match expr {
+        Expr::Term(_) => {}
+        Expr::Negate(e) | Expr::Not(e) => visit(e, f),
+        Expr::IsNull { expr, .. } | Expr::In { expr, .. } => visit(expr, f),
+        Expr::Op(l, _, r) | Expr::Compare(l, _, r) | Expr::And(l, r) | Expr::Or(l, r) => {
+            visit(l, f);
+            visit(r, f);
+        }
+        Expr::Call(_, args) => args.iter().for_each(|a| visit(a, f)),
     }
 }
 
@@ -277,6 +394,21 @@ pub enum ResolveError {
         name: &'static str,
         expected: Arity,
         got: usize,
+    },
+    /// An aggregate where only scalar expressions are allowed (`filter
+    /// 'sum(d.x) > 1'`).
+    Aggregate {
+        name: &'static str,
+    },
+    /// An aggregate inside another aggregate's arguments (`sum(max(d.x))`).
+    NestedAggregate {
+        outer: &'static str,
+        inner: &'static str,
+    },
+    /// A field used outside any aggregate in an aggregate list, where there
+    /// is no single row to take it from. `item` counts from 1.
+    Bare {
+        item: usize,
     },
 }
 
@@ -293,13 +425,30 @@ impl fmt::Display for ResolveError {
                 "{}() takes {} argument{}, got {}",
                 name,
                 expected,
-                // "1 argument", "at least 1 argument", "1 to 2 arguments"
-                if expected.max.unwrap_or(expected.min) == 1 {
+                // "1 argument", "at least 1 argument", "0 to 1 arguments"
+                if expected.min == 1 && expected.max.is_none_or(|max| max == 1) {
                     ""
                 } else {
                     "s"
                 },
                 got
+            ),
+            ResolveError::Aggregate { name } => write!(
+                f,
+                "{}() is an aggregate function and can't be used here",
+                name
+            ),
+            ResolveError::NestedAggregate { outer, inner } => write!(
+                f,
+                "{}() can't be used inside the aggregate {}()",
+                inner, outer
+            ),
+            ResolveError::Bare { item } => write!(
+                f,
+                "item {}: a field outside an aggregate needs exactly one min() or max() \
+                 in the list (its row is used) or must be a grouping key; \
+                 use first(), last(), argmax() or argmin() instead",
+                item
             ),
         }
     }
@@ -352,36 +501,39 @@ pub enum CompiledExpr {
         list: Vec<Value>,
         negated: bool,
     },
+    /// The result of the n-th aggregate of an
+    /// [`AggregateList`](crate::aggregate::AggregateList). Outside one it is
+    /// `null`.
+    Slot(usize),
 }
 
 impl CompiledExpr {
     /// Evaluate against `record` (the `d` in selectors).
     pub fn eval(&self, record: &Value) -> Result<Value, EvalError> {
+        self.eval_with(record, &[])
+    }
+
+    /// Evaluate with `slots` holding the aggregate results.
+    pub(crate) fn eval_with(&self, record: &Value, slots: &[Value]) -> Result<Value, EvalError> {
+        let eval = |e: &CompiledExpr| e.eval_with(record, slots);
         match self {
             CompiledExpr::Literal(v) => Ok(v.clone()),
             CompiledExpr::Select(path) => Ok(select(record, path).cloned().unwrap_or(Value::Null)),
-            CompiledExpr::Negate(inner) => negate(inner.eval(record)?),
-            CompiledExpr::Op(left, op, right) => {
-                binary(*op, left.eval(record)?, right.eval(record)?)
-            }
+            CompiledExpr::Negate(inner) => negate(eval(inner)?),
+            CompiledExpr::Op(left, op, right) => binary(*op, eval(left)?, eval(right)?),
             CompiledExpr::Call(function, args) => {
-                let args = args
-                    .iter()
-                    .map(|a| a.eval(record))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let args = args.iter().map(eval).collect::<Result<Vec<_>, _>>()?;
                 function.call(&args)
             }
-            CompiledExpr::Compare(left, op, right) => Ok(Value::Bool(compare(
-                *op,
-                &left.eval(record)?,
-                &right.eval(record)?,
-            ))),
+            CompiledExpr::Compare(left, op, right) => {
+                Ok(Value::Bool(compare(*op, &eval(left)?, &eval(right)?)))
+            }
             CompiledExpr::And(left, right) => {
-                let l = logic_operand("and", &left.eval(record)?)?;
+                let l = logic_operand("and", &eval(left)?)?;
                 if l == Some(false) {
                     return Ok(Value::Bool(false));
                 }
-                let r = logic_operand("and", &right.eval(record)?)?;
+                let r = logic_operand("and", &eval(right)?)?;
                 Ok(logic_result(match (l, r) {
                     (_, Some(false)) => Some(false),
                     (Some(true), r) => r,
@@ -389,11 +541,11 @@ impl CompiledExpr {
                 }))
             }
             CompiledExpr::Or(left, right) => {
-                let l = logic_operand("or", &left.eval(record)?)?;
+                let l = logic_operand("or", &eval(left)?)?;
                 if l == Some(true) {
                     return Ok(Value::Bool(true));
                 }
-                let r = logic_operand("or", &right.eval(record)?)?;
+                let r = logic_operand("or", &eval(right)?)?;
                 Ok(logic_result(match (l, r) {
                     (_, Some(true)) => Some(true),
                     (Some(false), r) => r,
@@ -401,17 +553,18 @@ impl CompiledExpr {
                 }))
             }
             CompiledExpr::Not(inner) => Ok(logic_result(
-                logic_operand("not", &inner.eval(record)?)?.map(|b| !b),
+                logic_operand("not", &eval(inner)?)?.map(|b| !b),
             )),
             CompiledExpr::IsNull { expr, negated } => {
-                Ok(Value::Bool(expr.eval(record)?.is_null() != *negated))
+                Ok(Value::Bool(eval(expr)?.is_null() != *negated))
             }
+            CompiledExpr::Slot(i) => Ok(slots.get(*i).cloned().unwrap_or(Value::Null)),
             CompiledExpr::In {
                 expr,
                 list,
                 negated,
             } => {
-                let v = expr.eval(record)?;
+                let v = eval(expr)?;
                 Ok(Value::Bool(
                     list.iter().any(|item| json_eq(&v, item)) != *negated,
                 ))
@@ -457,24 +610,37 @@ mod tests {
                 "abs",
                 "acos",
                 "acosh",
+                "argmax",
+                "argmin",
                 "asin",
                 "asinh",
                 "atan",
                 "atanh",
+                "avg",
                 "capitalize",
                 "ceil",
+                "collect",
                 "cos",
                 "cosh",
+                "count",
+                "count_distinct",
                 "exp",
+                "first",
                 "floor",
                 "isfloat",
                 "isfloatnan",
                 "isnull",
+                "last",
                 "log",
                 "log10",
+                "max",
+                "min",
                 "sin",
                 "sinh",
                 "sqrt",
+                "stddev",
+                "stddev_pop",
+                "sum",
                 "tan",
                 "tanh",
                 "tofloat",
@@ -483,6 +649,8 @@ mod tests {
                 "tostring",
                 "toupper",
                 "trunc",
+                "var",
+                "var_pop",
             ]
         );
         assert!(FunctionRegistry::empty().names().is_empty());

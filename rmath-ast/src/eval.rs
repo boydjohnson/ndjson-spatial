@@ -58,6 +58,10 @@ pub enum EvalError {
     NotBool {
         got: &'static str,
     },
+    /// An aggregate function was called on one record's values.
+    NotScalar {
+        func: &'static str,
+    },
 }
 
 impl fmt::Display for EvalError {
@@ -80,6 +84,9 @@ impl fmt::Display for EvalError {
             }
             EvalError::OutOfRange { func } => write!(f, "{}: number out of range", func),
             EvalError::NotBool { got } => write!(f, "expected a bool, got {}", got),
+            EvalError::NotScalar { func } => {
+                write!(f, "{}() is an aggregate and needs a group of records", func)
+            }
         }
     }
 }
@@ -294,7 +301,7 @@ pub(crate) fn json_eq(left: &Value, right: &Value) -> bool {
 }
 
 /// The order of two numbers, two strings, or two bools; `None` otherwise.
-fn json_order(left: &Value, right: &Value) -> Option<Ordering> {
+pub(crate) fn json_order(left: &Value, right: &Value) -> Option<Ordering> {
     match (left, right) {
         (Value::Number(a), Value::Number(b)) => num_order(json_to_num(a), json_to_num(b)),
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),

@@ -3,6 +3,14 @@
 Replaces `agg`. Aggregation is expressed in `select` (see
 [02](02-select-and-expressions.md)); this document covers how grouping runs.
 
+**Status:** the three strategies below are implemented in
+`ndjson/src/group.rs` over `rmath_ast::AggregateList`, and `agg` runs on
+them (hash by default, `--sorted`, `--grouped`, `--max-groups`,
+`--allow-unbounded`). Hash groups live in a `BTreeMap`, so output is always
+in key order and `--unordered` isn't needed. Still to do: `select`'s
+aggregate mode and `--by` (wiring onto `group.rs`), the sketches, `scan`, and
+top-k per group.
+
 ## Three execution strategies
 
 ### 1. No grouping — S0
