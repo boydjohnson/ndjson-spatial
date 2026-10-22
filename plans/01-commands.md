@@ -44,7 +44,7 @@ Space classes are defined in [README.md](README.md#space-classes).
 | `select count(), sum(d.x), ...` | S0 | new | Whole-stream aggregates with constant state. |
 | `select ... --by <expr>` | S0 | new | Group-by over **sorted** input (adjacent runs). Errors on out-of-order keys. |
 | `select ... --by <expr> --hash` | S2 | new | One accumulator set per distinct key; for unsorted input with few groups. |
-| `agg --group-by g --agg f sel` | — | deprecate | Rewrites to `select <f>(sel) --by g --hash`. |
+| `agg --group-by g --agg f sel` | S2 / S0 | deprecate | Now runs on the shared aggregate engine (`ndjson/src/group.rs`): repeatable `-a`/`-g`, `--sorted`/`--grouped` for constant memory, `--max-groups`. Becomes an alias for `select <f>(sel) --by g --hash` once `select` has aggregate mode. |
 | `describe` | S0 (per field) | new | Per-field count, null count, type histogram, min, max, mean, stddev, approx distinct (HLL), approx p50/p90/p99 (KLL/t-digest). Memory grows with the number of distinct *field names*, not records. |
 
 ### Ordering and combining
