@@ -17,7 +17,7 @@
 use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use ndjson::{
     aggregate::{aggregate, Aggregation},
-    filter, from_json, head, join, pick_field, sort, tail,
+    filter, from_json, head, join, pick_field, select, sort, tail,
 };
 use ndjson_common::{
     error::NdJsonSpatialError,
@@ -63,6 +63,44 @@ fn main() {
             Err(NdJsonSpatialError::Error(err)) => {
                 writeln!(::std::io::stderr(), "filter: {}", err)
                     .expect("Unable to write to stderr");
+                exit(1);
+            }
+        }
+    } else if let Some(args) = args.subcommand_matches("select") {
+        let list = args.get_one::<String>("list").expect("list is required");
+        let mode = if args.get_flag("raw") {
+            select::OutputMode::Raw
+        } else if args.get_flag("tsv") {
+            select::OutputMode::Tsv
+        } else {
+            select::OutputMode::Object
+        };
+        let list = match select::parse_select_list(list, mode) {
+            Ok(list) => list,
+            Err(err) => {
+                eprintln!("select: {}", err);
+                exit(1);
+            }
+        };
+        for warning in &list.warnings {
+            eprintln!("select: {}", warning);
+        }
+        let mut output = BufWriter::with_capacity(1_000_000, stdout().lock());
+        match select::ndjson_select(&list, mode, &mut stdin().lock(), &mut output) {
+            Ok(summary) => {
+                for item in summary.errors {
+                    eprintln!(
+                        "select: {} error{} in '{}', written as null (first at record {}: {})",
+                        item.count,
+                        if item.count == 1 { "" } else { "s" },
+                        item.item,
+                        item.first.0,
+                        item.first.1
+                    );
+                }
+            }
+            Err(NdJsonSpatialError::Error(err)) => {
+                eprintln!("select: {}", err);
                 exit(1);
             }
         }
@@ -311,6 +349,30 @@ fn parse_args() -> ArgMatches {
                     Arg::new("expression")
                         .required(true)
                         .help("the expression that yields a field"),
+                ),
+        )
+        .subcommand(
+            Command::new("select")
+                .about("Writes a list of expressions for each record")
+                .arg(
+                    Arg::new("list")
+                        .required(true)
+                        .value_name("list")
+                        .help("Comma-separated expressions, each optionally 'as <name>'; '*' is the whole record, '* except (d.a, d.b)' drops fields. e.g. 'd.name, d.price * d.qty as total'"),
+                )
+                .arg(
+                    Arg::new("raw")
+                        .short('r')
+                        .long("raw")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("tsv")
+                        .help("Write bare JSON values: one item as is, several as an array"),
+                )
+                .arg(
+                    Arg::new("tsv")
+                        .long("tsv")
+                        .action(ArgAction::SetTrue)
+                        .help("Write tab-separated values: strings unquoted, null empty"),
                 ),
         )
         .subcommand(

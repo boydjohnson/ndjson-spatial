@@ -268,7 +268,7 @@ mod tests {
 
         assert_eq!(
             output,
-            "{\"bar\":2,\"baz\":3,\"foo\":1}\n".as_bytes().to_vec()
+            "{\"foo\":1,\"bar\":2,\"baz\":3}\n".as_bytes().to_vec()
         );
     }
 
@@ -291,7 +291,7 @@ mod tests {
 
         assert_eq!(
             output,
-            "{\"bar\":2,\"baz\":3,\"foo\":1}\n{\"bar\":2,\"baz\":2,\"foo\":1}\n"
+            "{\"foo\":1,\"bar\":2,\"baz\":3}\n{\"foo\":1,\"bar\":2,\"baz\":2}\n"
                 .as_bytes()
                 .to_vec()
         );
@@ -322,7 +322,7 @@ mod tests {
 
         assert_eq!(
             output,
-            "{\"bar\":2,\"baz\":3,\"bub\":2,\"foo\":1}\n"
+            "{\"foo\":1,\"bub\":2,\"bar\":2,\"baz\":3}\n"
                 .as_bytes()
                 .to_vec()
         );
@@ -352,7 +352,7 @@ mod tests {
 
         assert_eq!(
             output,
-            "{\"brand\":[1,2,3,4],\"color\":null,\"country\":\"USA\",\"county\":\"Alameda\",\"state\":\"California\"}\n".as_bytes().to_vec()
+            "{\"country\":\"USA\",\"state\":\"California\",\"county\":\"Alameda\",\"color\":null,\"brand\":[1,2,3,4]}\n".as_bytes().to_vec()
         );
     }
 
@@ -388,7 +388,7 @@ mod tests {
 
         assert_eq!(
             run_join(reference, &["state", "county"], stream),
-            "{\"county\":\"Ramsey\",\"pop\":2,\"state\":\"MN\"}\n"
+            "{\"state\":\"MN\",\"county\":\"Ramsey\",\"pop\":2}\n"
         );
     }
 

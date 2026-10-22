@@ -245,4 +245,12 @@ mod tests {
         assert_eq!(encoded(&json!(1), false), encoded(&json!(1.0), false));
         assert_eq!(encoded(&json!(0), false), encoded(&json!(-0.0), false));
     }
+
+    #[test]
+    fn test_object_key_order_does_not_matter() {
+        // serde_json keeps input key order (preserve_order)
+        let ab: Value = serde_json::from_str(r#"{"a":1,"b":2}"#).unwrap();
+        let ba: Value = serde_json::from_str(r#"{"b":2,"a":1}"#).unwrap();
+        assert_eq!(encoded(&ab, false), encoded(&ba, false));
+    }
 }

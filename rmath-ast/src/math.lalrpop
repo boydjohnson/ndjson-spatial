@@ -1,4 +1,4 @@
-use crate::parser::ast::{BinaryOp, CompareOp, Expr, Num, Term, Value};
+use crate::parser::ast::{BinaryOp, CompareOp, Expr, Num, SelectItem, Term, Value};
 use crate::parser::{negate, negate_num, unescape};
 use yajlish_ndjson::Selector as JsonSelector;
 use lalrpop_util::ParseError;
@@ -213,4 +213,35 @@ Tier3Op: BinaryOp = {
 Tier3: Box<Expr> = {
     Term,
     <s:Tier3> <o:Tier3Op> <t:Term> => Box::new(Expr::Op(s, o, t)),
+};
+
+// A `select` list: `item, item, ...`, where an item is `*` (the whole
+// record, optionally `except (selector, ...)`) or an expression with an
+// optional `as name` alias. Expression items carry their byte span in the
+// source so callers can name them after their text.
+pub SelectList: Vec<SelectItem> = {
+    <mut v:(<SelectItem> ",")*> <e:SelectItem> => {
+        v.push(e);
+        v
+    }
+};
+
+SelectItem: SelectItem = {
+    "*" => SelectItem::Star { except: vec![] },
+    "*" "except" "(" <first:Selector> <rest:("," <Selector>)*> ")" => {
+        let mut except = vec![first];
+        except.extend(rest);
+        SelectItem::Star { except }
+    },
+    <l:@L> <e:Expr> <r:@R> <alias:("as" <Alias>)?> => SelectItem::Expr {
+        expr: *e,
+        alias,
+        span: (l, r),
+    },
+};
+
+// An output key: a bare name or a quoted string.
+Alias: String = {
+    FunctionName,
+    StringP,
 };

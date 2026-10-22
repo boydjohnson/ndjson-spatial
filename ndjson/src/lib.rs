@@ -7,6 +7,7 @@ pub mod join;
 pub mod memcomparable;
 pub mod pick_field;
 mod records;
+pub mod select;
 pub mod sort;
 pub mod tail;
 pub mod to_json;

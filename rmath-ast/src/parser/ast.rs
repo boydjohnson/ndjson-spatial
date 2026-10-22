@@ -67,3 +67,18 @@ pub enum CompareOp {
     Gt,
     Ge,
 }
+
+/// One item of a `select` list.
+#[derive(Debug, PartialEq)]
+pub enum SelectItem {
+    /// `*` or `* except (d.a, d.b.c)`: the whole record, minus the given
+    /// paths.
+    Star { except: Vec<Vec<Selector>> },
+    /// `expr` or `expr as name`. `span` is the expression's byte range in
+    /// the source text.
+    Expr {
+        expr: Expr,
+        alias: Option<String>,
+        span: (usize, usize),
+    },
+}
