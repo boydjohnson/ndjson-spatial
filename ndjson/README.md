@@ -13,8 +13,10 @@ SUBCOMMANDS:
     agg           Aggregatation commands on a grouped-by key
     filter        returns only json that matches filter expression
     from-json     Converts json to ndjson
+    head          Outputs the first n records
     join          joins json file to ndjson stream
     pick-field    picks a field from all of the ndjson objects
+    tail          Outputs the last n records
 ```
 
 ## Use-case
@@ -44,6 +46,17 @@ Filter where field is equal to a value
 
 ```sh
 cat <complaints.ndjson> | ndjson filter 'd.product == Virtual Currency'
+```
+
+### Head and Tail
+
+The first or last `n` records (default 10). Records pass through unchanged and
+blank lines are skipped. `head` stops reading once it has `n` records, so the
+upstream command exits early; `tail` keeps only the last `n` in memory.
+
+```sh
+cat <file.ndjson> | ndjson head -n 5
+cat <file.ndjson> | ndjson tail -n 5
 ```
 
 ### Join
