@@ -21,14 +21,11 @@ use ndjson::{
     group::{AggregateSummary, Grouping},
     head, join, pick_field, select, sort, tail,
 };
-use ndjson_common::{
-    error::NdJsonSpatialError,
-    json_selector_parser::{parse_json_selector, Selector},
-};
+use ndjson_common::{error::NdJsonSpatialError, json_selector_parser::parse_json_selector};
 use rmath_ast::FunctionRegistry;
 use std::{
     fs::File,
-    io::{stdin, stdout, BufReader, BufWriter, Write},
+    io::{stdin, stdout, BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
     process::exit,
 };
@@ -157,61 +154,8 @@ fn main() {
         ) {
             writeln!(::std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
-    } else if let Some("join") = args.subcommand_name() {
-        let args = args
-            .subcommand_matches("join")
-            .expect("subcommand was correctly tested for");
-        let filename = args
-            .get_one::<String>("reference")
-            .map(String::as_str)
-            .expect("reference is required");
-        let mut reference_file = match File::open(filename) {
-            Ok(r) => BufReader::new(r),
-            Err(e) => {
-                writeln!(::std::io::stderr(), "Error opening reference file: {}", e)
-                    .expect("Unable to write to stderr");
-                exit(1);
-            }
-        };
-
-        let ref_fields: Vec<Vec<Selector>> = match args
-            .get_many::<String>("reference-fields")
-            .map(|v| v.map(String::as_str))
-            .expect("reference-fields is required")
-            .map(|s| parse_json_selector(s.into()).map(|(_, result)| result))
-            .collect()
-        {
-            Ok(v) => v,
-            Err(e) => {
-                writeln!(::std::io::stderr(), "Error parsing reference-fields: {}", e)
-                    .expect("Unable to write to stderr");
-                exit(1)
-            }
-        };
-        let stream_fields: Vec<Vec<Selector>> = match args
-            .get_many::<String>("stream-fields")
-            .map(|v| v.map(String::as_str))
-            .expect("stream-fields is required")
-            .map(|s| parse_json_selector(s.into()).map(|(_, result)| result))
-            .collect()
-        {
-            Ok(v) => v,
-            Err(e) => {
-                writeln!(::std::io::stderr(), "Error parsing stream-fields: {}", e)
-                    .expect("Unable to write to stderr");
-                exit(1)
-            }
-        };
-
-        if let Err(err) = join::join(
-            &mut reference_file,
-            ref_fields,
-            stream_fields,
-            std::io::stdin().lock(),
-            std::io::stdout().lock(),
-        ) {
-            writeln!(::std::io::stderr(), "{:?}", err).expect("Error writing to stderr");
-        }
+    } else if let Some(args) = args.subcommand_matches("join") {
+        exit(run_join(args));
     } else if let Some("from-json") = args.subcommand_name() {
         let args = args
             .subcommand_matches("from-json")
@@ -307,6 +251,131 @@ fn main() {
             exit(1);
         }
     }
+}
+
+fn run_join(args: &ArgMatches) -> i32 {
+    match join_command(args) {
+        Ok(summary) => {
+            if let Some(first) = summary.first_key_error {
+                eprintln!(
+                    "join: {} record{} had a key that failed to evaluate and never matched \
+                     (first at {} line {}: {})",
+                    summary.key_errors,
+                    if summary.key_errors == 1 { "" } else { "s" },
+                    first.input,
+                    first.line,
+                    first.error
+                );
+            }
+            0
+        }
+        Err(NdJsonSpatialError::Error(err)) => {
+            eprintln!("join: {}", err);
+            1
+        }
+    }
+}
+
+fn join_command(args: &ArgMatches) -> Result<join::JoinSummary, NdJsonSpatialError> {
+    let error = |message: &str| NdJsonSpatialError::Error(message.to_owned());
+    let string = |name: &str| args.get_one::<String>(name).map(String::as_str);
+
+    let (left_on, right_on) = if let Some(on) = string("on") {
+        (join::parse_keys("--on", on)?, join::parse_keys("--on", on)?)
+    } else if let (Some(left), Some(right)) = (string("left-on"), string("right-on")) {
+        (
+            join::parse_keys("--left-on", left)?,
+            join::parse_keys("--right-on", right)?,
+        )
+    } else if let (Some(reference), Some(stream)) = (
+        args.get_many::<String>("reference-fields"),
+        args.get_many::<String>("stream-fields"),
+    ) {
+        eprintln!(
+            "join: --ref-fields and --stream-fields are deprecated; use --right-on and --left-on \
+             with comma-separated keys"
+        );
+        (
+            stream
+                .map(|s| join::parse_legacy_key("--stream-fields", s))
+                .collect::<Result<_, _>>()?,
+            reference
+                .map(|s| join::parse_legacy_key("--ref-fields", s))
+                .collect::<Result<_, _>>()?,
+        )
+    } else {
+        return Err(error(
+            "give the join key with --on, or --left-on and --right-on",
+        ));
+    };
+
+    let mut options = join::JoinOptions::new(left_on, right_on)?;
+    options.kind = [
+        ("left", join::JoinType::Left),
+        ("right", join::JoinType::Right),
+        ("outer", join::JoinType::Outer),
+        ("semi", join::JoinType::Semi),
+        ("anti", join::JoinType::Anti),
+    ]
+    .iter()
+    .find(|(flag, _)| args.get_flag(flag))
+    .map_or(join::JoinType::Inner, |(_, kind)| *kind);
+    if let Some(prefix) = string("prefix-right") {
+        options.right_fields = join::RightFields::Prefix(prefix.to_owned());
+    } else if let Some(path) = string("into") {
+        options.right_fields = join::RightFields::Into(join::parse_into(path)?);
+    }
+    options.max_run = *args
+        .get_one::<usize>("max-run")
+        .expect("max-run has a default");
+
+    let left_name = string("left-input").unwrap_or("-");
+    let mut output = BufWriter::with_capacity(1_000_000, stdout().lock());
+    if let Some(reference) = string("reference") {
+        if string("right-input").is_some() {
+            return Err(error(
+                "with --ref, give at most one input: the --ref file is the right side",
+            ));
+        }
+        join::hash_join(
+            join::Input::new(display_name(left_name), open_input(left_name)?),
+            join::Input::new(reference, open_input(reference)?),
+            &mut output,
+            &options,
+        )
+    } else {
+        let right_name = match string("right-input") {
+            Some(right) => right,
+            None => return Err(error("give two inputs, LEFT and RIGHT, or use --ref")),
+        };
+        if left_name == "-" && right_name == "-" {
+            return Err(error("only one input can be stdin"));
+        }
+        join::merge_join(
+            join::Input::new(display_name(left_name), open_input(left_name)?),
+            join::Input::new(display_name(right_name), open_input(right_name)?),
+            &mut output,
+            &options,
+        )
+    }
+}
+
+fn display_name(name: &str) -> &str {
+    if name == "-" {
+        "stdin"
+    } else {
+        name
+    }
+}
+
+/// Opens `name` for reading, or stdin for `-`.
+fn open_input(name: &str) -> Result<Box<dyn BufRead>, NdJsonSpatialError> {
+    if name == "-" {
+        return Ok(Box::new(BufReader::with_capacity(1 << 20, stdin())));
+    }
+    File::open(name)
+        .map(|file| Box::new(BufReader::with_capacity(1 << 20, file)) as Box<dyn BufRead>)
+        .map_err(|e| NdJsonSpatialError::Error(format!("unable to open {}: {}", name, e)))
 }
 
 fn run_sort(args: &ArgMatches) -> i32 {
@@ -434,33 +503,130 @@ fn parse_args() -> ArgMatches {
                     Arg::new("allow-unbounded")
                         .long("allow-unbounded")
                         .action(ArgAction::SetTrue)
-                        .help("Allow count_distinct and collect, whose memory grows with the input"),
+                        .help("Allow count_distinct and collect, whose memory grows with the input (approx_count_distinct doesn't need this)"),
                 ),
         )
         .subcommand(
             Command::new("join")
-                .about("joins json file to ndjson stream")
+                .about("Joins two ndjson inputs on a key")
+                .long_about(
+                    "Joins two ndjson inputs on a key. By default this is a merge join: both \
+                     inputs must be sorted ascending by their keys (ndjson sort -k ...), memory \
+                     holds only the right records of one key, and a record out of order is an \
+                     error. With --ref the reference file is loaded into memory and the left \
+                     input (stdin by default) can be in any order. Keys with a null, array or \
+                     object component never match. On field collisions the right value wins, \
+                     unless --prefix-right or --into is given.",
+                )
+                .arg(
+                    Arg::new("left-input")
+                        .value_name("LEFT")
+                        .help("The left input, '-' for stdin; with --ref, defaults to stdin"),
+                )
+                .arg(
+                    Arg::new("right-input")
+                        .value_name("RIGHT")
+                        .help("The right input, '-' for stdin; not given with --ref"),
+                )
+                .arg(
+                    Arg::new("on")
+                        .long("on")
+                        .value_name("keys")
+                        .conflicts_with_all(["left-on", "right-on"])
+                        .help("Comma-separated key expressions for both sides, matched as a tuple, e.g. --on 'd.state, d.county'"),
+                )
+                .arg(
+                    Arg::new("left-on")
+                        .long("left-on")
+                        .value_name("keys")
+                        .requires("right-on")
+                        .help("Key expressions for the left input"),
+                )
+                .arg(
+                    Arg::new("right-on")
+                        .long("right-on")
+                        .value_name("keys")
+                        .requires("left-on")
+                        .help("Key expressions for the right input"),
+                )
                 .arg(
                     Arg::new("reference")
                         .short('r')
                         .long("ref")
-                        .required(true)
-                        .num_args(1)
-                        .help("The ndjson file to join on"),
+                        .value_name("file")
+                        .help("Hash join: load this file into memory as the right side"),
+                )
+                .arg(
+                    Arg::new("left")
+                        .long("left")
+                        .action(ArgAction::SetTrue)
+                        .help("Also write left records without a match, unchanged"),
+                )
+                .arg(
+                    Arg::new("right")
+                        .long("right")
+                        .action(ArgAction::SetTrue)
+                        .help("Also write right records without a match (merge join only)"),
+                )
+                .arg(
+                    Arg::new("outer")
+                        .long("outer")
+                        .action(ArgAction::SetTrue)
+                        .help("Also write records without a match from both sides (merge join only)"),
+                )
+                .arg(
+                    Arg::new("semi")
+                        .long("semi")
+                        .action(ArgAction::SetTrue)
+                        .help("Write left records that have a match, once each, unchanged"),
+                )
+                .arg(
+                    Arg::new("anti")
+                        .long("anti")
+                        .action(ArgAction::SetTrue)
+                        .help("Write left records that have no match, unchanged"),
+                )
+                .group(
+                    clap::ArgGroup::new("join-type")
+                        .args(["left", "right", "outer", "semi", "anti"])
+                        .multiple(false),
+                )
+                .arg(
+                    Arg::new("prefix-right")
+                        .long("prefix-right")
+                        .value_name("prefix")
+                        .conflicts_with("into")
+                        .help("Prefix the right record's field names, e.g. --prefix-right r_"),
+                )
+                .arg(
+                    Arg::new("into")
+                        .long("into")
+                        .value_name("path")
+                        .help("Nest the whole right record at this path, e.g. --into d.right"),
+                )
+                .arg(
+                    Arg::new("max-run")
+                        .long("max-run")
+                        .value_name("n")
+                        .value_parser(clap::value_parser!(usize))
+                        .default_value("1000000")
+                        .help("Merge join: fail rather than hold more than this many right records with one key"),
                 )
                 .arg(
                     Arg::new("reference-fields")
                         .long("ref-fields")
-                        .required(true)
                         .num_args(1..)
-                        .help("The fields in the reference file to join on, matched as a composite key"),
+                        .requires("reference")
+                        .requires("stream-fields")
+                        .conflicts_with_all(["on", "left-on", "right-on"])
+                        .help("Deprecated: use --right-on. Selectors for the --ref file"),
                 )
                 .arg(
                     Arg::new("stream-fields")
                         .long("stream-fields")
-                        .required(true)
                         .num_args(1..)
-                        .help("The fields in the ndjson stream to join on, matched as a composite key"),
+                        .requires("reference-fields")
+                        .help("Deprecated: use --left-on. Selectors for the stream"),
                 ),
         )
         .subcommand(
@@ -500,7 +666,8 @@ fn parse_args() -> ArgMatches {
                      end. With --sorted, input sorted by the group key is grouped in \
                      constant memory.\n\n\
                      Functions: count sum avg min max first last var var_pop stddev \
-                     stddev_pop, and with --allow-unbounded count_distinct collect.",
+                     stddev_pop median approx_count_distinct, and with --allow-unbounded \
+                     count_distinct collect.",
                 )
                 .arg(
                     Arg::new("group-by")
@@ -547,7 +714,7 @@ fn parse_args() -> ArgMatches {
                     Arg::new("allow-unbounded")
                         .long("allow-unbounded")
                         .action(ArgAction::SetTrue)
-                        .help("Allow count_distinct and collect, whose memory grows with the input"),
+                        .help("Allow count_distinct and collect, whose memory grows with the input (approx_count_distinct doesn't need this)"),
                 ),
         )
         .subcommand(

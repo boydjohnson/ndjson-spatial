@@ -23,6 +23,15 @@
 //! - A value an aggregate can't take (`sum` of a string) is an
 //!   [`EvalError`]; the record is skipped for that aggregate only, and the
 //!   caller decides how to report it.
+//! - `approx_count_distinct(x[, p])`, `approx_quantile(x, q)` and
+//!   `median(x)` keep constant state in [sketches](crate::sketch). Their
+//!   second argument is a constant, checked when the list is compiled: `p`
+//!   is the HyperLogLog precision (4 to 18, default 14, `2^p` bytes, ~0.8%
+//!   error at 14) and `q` the quantile (0 to 1). Quantiles take numbers and
+//!   return one of them, by the nearest-rank method (`median` of 1, 2, 3, 4
+//!   is 2), exactly for up to 200 values and within ~1.5% of the rank after
+//!   that. `approx_count_distinct` counts values that compare equal once,
+//!   like `count_distinct`, and gives 0 for an empty group.
 //! - A field outside any aggregate (`max(d.amount), d.name`) is taken from
 //!   the record that held the list's only `min()` or `max()`, or must be a
 //!   grouping key. Anything else is [`ResolveError::Bare`].
@@ -51,6 +60,7 @@ use crate::{
     },
     parser::ast::{Expr, Num, Term},
     registry::{visit, Arity, CompiledExpr, Extreme, Function, FunctionRegistry, ResolveError},
+    sketch::{HyperLogLog, Kll},
 };
 use serde_json::Value;
 use std::{any::Any, cmp::Ordering, collections::HashSet, fmt, ops::Range, sync::Arc};
@@ -87,6 +97,8 @@ fn same<T: 'static>(other: &dyn Accumulator) -> &T {
 struct Slot {
     function: Arc<Function>,
     args: Vec<CompiledExpr>,
+    /// The values of the function's constant parameters.
+    params: Vec<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,16 +164,21 @@ impl AggregateList {
         for (n, item) in items.iter().enumerate() {
             let first_slot = list.slots.len();
             let slots = &mut list.slots;
-            let mut push = |function: Function, args| {
+            let mut push = |function: Function, (args, params)| {
                 slots.push(Slot {
                     function: Arc::new(function),
                     args,
+                    params,
                 });
                 CompiledExpr::Slot(slots.len() - 1)
             };
             let expr = registry.resolve_with(item, &mut |e| {
                 if by.contains(e) && !registry.contains_aggregate(e) {
-                    return Some(registry.resolve(e).map(|key| push(first(), vec![key])));
+                    return Some(
+                        registry
+                            .resolve(e)
+                            .map(|key| push(first(), (vec![key], vec![]))),
+                    );
                 }
                 match e {
                     Expr::Call(name, args) => {
@@ -174,7 +191,7 @@ impl AggregateList {
                     Expr::Term(Term::Selector(_)) => Some(match &row {
                         Some((extreme, key)) => registry
                             .resolve(e)
-                            .map(|field| push(arg(*extreme), vec![key.clone(), field])),
+                            .map(|field| push(arg(*extreme), (vec![key.clone(), field], vec![]))),
                         None => Err(ResolveError::Bare { item: n + 1 }),
                     }),
                     _ => None,
@@ -214,7 +231,12 @@ impl AggregateList {
             accumulators: self
                 .slots
                 .iter()
-                .map(|s| s.function.accumulator().expect("slots are aggregates"))
+                .map(|s| {
+                    s.function
+                        .accumulator(&s.params)
+                        .expect("slots are aggregates")
+                        .expect("parameters are checked by compile")
+                })
                 .collect(),
         }
     }
@@ -290,23 +312,46 @@ fn extreme_row(
     }
 }
 
-/// Check the arity of a call to `function` and resolve its (scalar)
-/// arguments.
+/// Check the arity of a call to `function`, resolve its (scalar) arguments,
+/// and evaluate and check its constant parameters.
 fn aggregate_args(
     registry: &FunctionRegistry,
     function: &Function,
     args: &[Expr],
-) -> Result<Vec<CompiledExpr>, ResolveError> {
+) -> Result<(Vec<CompiledExpr>, Vec<Value>), ResolveError> {
+    let name = function.name();
     if !function.arity().accepts(args.len()) {
         return Err(ResolveError::Arity {
-            name: function.name(),
+            name,
             expected: function.arity(),
             got: args.len(),
         });
     }
-    args.iter()
-        .map(|a| registry.resolve(a).map_err(|e| nested(function.name(), e)))
-        .collect()
+    let split = function.params_from().unwrap_or(args.len()).min(args.len());
+    let resolved = args[..split]
+        .iter()
+        .map(|a| registry.resolve(a).map_err(|e| nested(name, e)))
+        .collect::<Result<_, _>>()?;
+    let mut params = Vec::new();
+    for (n, a) in args.iter().enumerate().skip(split) {
+        let parameter = |message| ResolveError::Parameter { name, message };
+        let compiled = registry.resolve(a).map_err(|e| nested(name, e))?;
+        let mut constant = true;
+        visit(a, &mut |e| {
+            constant &= !matches!(e, Expr::Term(Term::Selector(_)))
+        });
+        if !constant {
+            return Err(parameter(format!("argument {} must be a constant", n + 1)));
+        }
+        let value = compiled
+            .eval(&Value::Null)
+            .map_err(|e| parameter(format!("argument {}: {}", n + 1, e)))?;
+        params.push(value);
+    }
+    if let Some(Err(message)) = function.accumulator(&params) {
+        return Err(ResolveError::Parameter { name, message });
+    }
+    Ok((resolved, params))
 }
 
 fn nested(outer: &'static str, e: ResolveError) -> ResolveError {
@@ -360,6 +405,52 @@ pub(crate) fn register(registry: &mut FunctionRegistry) {
     );
     registry
         .register(Function::aggregate("collect", one, || Box::new(Collect::default())).unbounded());
+
+    registry.register(Function::aggregate_with_params(
+        "approx_count_distinct",
+        Arity::range(1, 2),
+        1,
+        |params| {
+            let p = match params.first() {
+                None => HyperLogLog::DEFAULT_PRECISION,
+                Some(p) => p
+                    .as_u64()
+                    .and_then(|p| u8::try_from(p).ok())
+                    .filter(|p| {
+                        (HyperLogLog::MIN_PRECISION..=HyperLogLog::MAX_PRECISION).contains(p)
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "the precision must be an integer from {} to {}, got {}",
+                            HyperLogLog::MIN_PRECISION,
+                            HyperLogLog::MAX_PRECISION,
+                            p
+                        )
+                    })?,
+            };
+            Ok(Box::new(ApproxCountDistinct(HyperLogLog::new(p))) as Box<dyn Accumulator>)
+        },
+    ));
+    registry.register(Function::aggregate_with_params(
+        "approx_quantile",
+        Arity::exactly(2),
+        1,
+        |params| {
+            let q = params[0]
+                .as_f64()
+                .filter(|q| (0.0..=1.0).contains(q))
+                .ok_or_else(|| {
+                    format!(
+                        "the quantile must be a number from 0 to 1, got {}",
+                        params[0]
+                    )
+                })?;
+            Ok(Box::new(Quantile::new("approx_quantile", q)) as Box<dyn Accumulator>)
+        },
+    ));
+    registry.register(Function::aggregate("median", one, || {
+        Box::new(Quantile::new("median", 0.5))
+    }));
 }
 
 /// `first(x)`: the first non-null `x`.
@@ -844,6 +935,80 @@ impl Accumulator for Collect {
     }
 }
 
+/// `approx_count_distinct(x[, p])`.
+struct ApproxCountDistinct(HyperLogLog);
+
+impl Accumulator for ApproxCountDistinct {
+    fn update(&mut self, args: &[Value]) -> Result<(), EvalError> {
+        if !args[0].is_null() {
+            let mut key = String::new();
+            canonical(&args[0], &mut key);
+            self.0.insert(key.as_bytes());
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, other: &dyn Accumulator) {
+        self.0.merge(&same::<Self>(other).0);
+    }
+
+    fn finish(&self) -> Result<Value, EvalError> {
+        Ok(Value::from(self.0.estimate().round() as u64))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// `approx_quantile(x, q)` / `median(x)`. The result is an integer when
+/// every input was one.
+struct Quantile {
+    name: &'static str,
+    q: f64,
+    sketch: Kll,
+    all_ints: bool,
+}
+
+impl Quantile {
+    fn new(name: &'static str, q: f64) -> Self {
+        Quantile {
+            name,
+            q,
+            sketch: Kll::new(Kll::DEFAULT_K),
+            all_ints: true,
+        }
+    }
+}
+
+impl Accumulator for Quantile {
+    fn update(&mut self, args: &[Value]) -> Result<(), EvalError> {
+        if let Some(n) = number(self.name, &args[0])? {
+            self.all_ints &= as_int(n).is_some();
+            self.sketch.insert(as_f64(n));
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, other: &dyn Accumulator) {
+        let other: &Self = same(other);
+        self.sketch.merge(&other.sketch);
+        self.all_ints &= other.all_ints;
+    }
+
+    fn finish(&self) -> Result<Value, EvalError> {
+        match self.sketch.quantile(self.q) {
+            None => Ok(Value::Null),
+            Some(x) if self.all_ints => int_result(self.name, x as i128),
+            Some(x) => float_result(self.name, x),
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,6 +1176,106 @@ mod tests {
     }
 
     #[test]
+    fn test_approx_count_distinct() {
+        let records = xs(&[
+            json!(1),
+            json!(1.0),
+            json!("1"),
+            Value::Null,
+            json!({"a": 1, "b": 2}),
+            json!({"b": 2, "a": 1}),
+        ]);
+        assert_eq!(one("approx_count_distinct(d.x)", &records), json!(3));
+        assert_eq!(one("approx_count_distinct(d.x, 4)", &records), json!(3));
+        assert_eq!(one("approx_count_distinct(d.x)", &[]), json!(0));
+
+        let many: Vec<_> = (0..20_000).map(|i| json!({ "x": i % 5000 })).collect();
+        let n = one("approx_count_distinct(d.x)", &many).as_f64().unwrap();
+        assert!((n - 5000.0).abs() < 5000.0 * 0.03, "{}", n);
+        let n = one("approx_count_distinct(d.x, 18)", &many)
+            .as_f64()
+            .unwrap();
+        assert!((n - 5000.0).abs() < 5000.0 * 0.01, "{}", n);
+        assert!(compile(&["approx_count_distinct(d.x, 2 * 7)"], &[])
+            .unwrap()
+            .unbounded_functions()
+            .is_empty());
+    }
+
+    #[test]
+    fn test_approx_quantile_and_median() {
+        let records = xs(&[json!(4), json!(1), Value::Null, json!(3), json!(2)]);
+        assert_eq!(
+            run(
+                &[
+                    "median(d.x)",
+                    "approx_quantile(d.x, 0)",
+                    "approx_quantile(d.x, 1)",
+                    "approx_quantile(d.x, 0.75)",
+                    "approx_quantile(d.x, 1 / 4)",
+                ],
+                &records
+            ),
+            vec![json!(2), json!(1), json!(4), json!(3), json!(1)]
+        );
+        // a float input makes the result a float
+        let mixed = xs(&[json!(1), json!(2.5), json!(3)]);
+        assert_eq!(one("median(d.x)", &mixed), json!(2.5));
+        assert_eq!(one("approx_quantile(d.x, 0)", &mixed), json!(1.0));
+        assert_eq!(one("median(d.x)", &[]), Value::Null);
+
+        let many: Vec<_> = (0..100_000).rev().map(|i| json!({ "x": i })).collect();
+        let p90 = one("approx_quantile(d.x, 0.9)", &many).as_i64().unwrap();
+        assert!((p90 - 90_000).abs() < 2_000, "{}", p90);
+
+        // non-numbers are type errors, and the record is skipped
+        let list = compile(&["median(d.x)"], &[]).unwrap();
+        let mut state = list.start();
+        let mut errors = vec![];
+        for r in xs(&[json!(5), json!("six"), json!(7)]) {
+            list.update(&mut state, &r, |_, e| errors.push(e.to_string()));
+        }
+        assert_eq!(errors.len(), 1);
+        assert_eq!(list.finish(&state), vec![Ok(json!(5))]);
+    }
+
+    #[test]
+    fn test_sketch_parameters_are_checked() {
+        let error = |item: &str| compile(&[item], &[]).unwrap_err().to_string();
+        assert_eq!(
+            error("approx_quantile(d.x, 1.5)"),
+            "approx_quantile(): the quantile must be a number from 0 to 1, got 1.5"
+        );
+        assert_eq!(
+            error("approx_quantile(d.x, \"p90\")"),
+            "approx_quantile(): the quantile must be a number from 0 to 1, got \"p90\""
+        );
+        assert_eq!(
+            error("approx_quantile(d.x, d.q)"),
+            "approx_quantile(): argument 2 must be a constant"
+        );
+        assert_eq!(
+            error("approx_quantile(d.x)"),
+            "approx_quantile() takes 2 arguments, got 1"
+        );
+        assert_eq!(
+            error("approx_count_distinct(d.x, 20)"),
+            "approx_count_distinct(): the precision must be an integer from 4 to 18, got 20"
+        );
+        assert_eq!(
+            error("approx_count_distinct(d.x, 1 / 0)"),
+            format!(
+                "approx_count_distinct(): argument 2: {}",
+                EvalError::DivisionByZero
+            )
+        );
+        assert_eq!(
+            error("approx_quantile(d.x, max(d.y))"),
+            "max() can't be used inside the aggregate approx_quantile()"
+        );
+    }
+
+    #[test]
     fn test_scalar_around_and_inside_aggregates() {
         let records = vec![
             json!({"price": 2, "qty": 3}),
@@ -1153,6 +1418,9 @@ mod tests {
             "argmax(d.x, d.i)",
             "count_distinct(d.x)",
             "collect(d.x)",
+            "approx_count_distinct(d.x)",
+            "approx_quantile(d.x, 0.9)",
+            "median(d.x)",
         ];
         let records: Vec<_> = [4, 8, 15, 16, 23, 42, 8, 4]
             .iter()

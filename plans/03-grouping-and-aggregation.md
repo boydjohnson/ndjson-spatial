@@ -8,8 +8,9 @@ Replaces `agg`. Aggregation is expressed in `select` (see
 in aggregate mode (`--by`, `--grouped`, `--hash`, `--max-groups`,
 `--allow-unbounded`), and so does `agg` (hash by default, `--sorted`).
 Hash groups live in a `BTreeMap`, so output is always in key order and
-`--unordered` isn't needed. Still to do: the sketches, `scan`, and top-k per
-group.
+`--unordered` isn't needed. The distinct-count and quantile sketches are done
+(`rmath-ast/src/sketch.rs`). Still to do: `approx_top_k`, `scan`, and top-k
+per group.
 
 ## Three execution strategies
 
@@ -64,9 +65,23 @@ data. The O(1) versions:
 | quantiles | `approx_quantile(x, q)`, `median` | KLL | ~few KiB | ~1% rank error |
 | heavy hitters | `approx_top_k(x, k)` | Space-Saving | O(k) | bounded |
 
-Candidate crates: `hyperloglogplus`, `pdatastructs`, or small in-repo
-implementations (both HLL and KLL are a few hundred lines). Sketches implement
-`merge`, so per-partition results can be combined.
+Done for distinct count and quantiles, as small in-repo implementations in
+`rmath-ast/src/sketch.rs` (no new dependencies):
+
+- `approx_count_distinct(x[, p])` is HyperLogLog with Ertl's improved
+  estimator instead of HLL++'s bias tables; it is accurate from a handful of
+  values up (small counts come out exact). `p` is 4 to 18, default 14.
+- `approx_quantile(x, q)` and `median(x)` are a KLL sketch with `k = 200`:
+  exact up to 200 values, ~1.5% rank error after that, about 600 floats of
+  state. The result is an input value (nearest rank, like `percentile_disc`),
+  an integer when every input was.
+- The second argument is a constant parameter, evaluated and checked when
+  the list is compiled (`Function::aggregate_with_params`), so
+  `approx_quantile(d.x, 2)` and `approx_quantile(d.x, d.q)` fail up front.
+- Both implement `merge`, so per-partition results can be combined, and both
+  are deterministic (fixed hash, fixed coin seed).
+
+`approx_top_k` (Space-Saving) is still to do.
 
 Exact versions (`count_distinct`, `collect`) exist but require
 `--allow-unbounded`.

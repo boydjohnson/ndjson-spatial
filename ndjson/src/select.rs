@@ -245,16 +245,22 @@ impl Default for GroupOptions {
 
 /// Parse a `--by` list: comma-separated expressions, without `as` or `*`.
 pub fn parse_by(src: &str) -> Result<Vec<Expr>, String> {
+    parse_key_list("--by", src)
+}
+
+/// Parse a comma-separated list of key expressions for `flag` (`--by`,
+/// `--on`, ...): no `*` and no `as`.
+pub fn parse_key_list(flag: &str, src: &str) -> Result<Vec<Expr>, String> {
     SelectListParser::new()
         .parse(src)
-        .map_err(|e| format!("--by: parse error: {}", e))?
+        .map_err(|e| format!("{}: parse error: {}", flag, e))?
         .into_iter()
         .map(|item| match item {
             SelectItem::Expr {
                 expr, alias: None, ..
             } => Ok(expr),
-            SelectItem::Expr { .. } => Err("--by: keys can't be renamed with 'as'".to_string()),
-            SelectItem::Star { .. } => Err("--by: '*' can't be a key".to_string()),
+            SelectItem::Expr { .. } => Err(format!("{}: keys can't be renamed with 'as'", flag)),
+            SelectItem::Star { .. } => Err(format!("{}: '*' can't be a key", flag)),
         })
         .collect()
 }
@@ -983,6 +989,32 @@ mod tests {
             .unwrap()
             .0,
             "1\n3\n"
+        );
+    }
+
+    #[test]
+    fn test_approximate_aggregates() {
+        let (output, summary) = grouped(
+            "d.state, approx_count_distinct(d.name) as names, median(d.amount), \
+             approx_quantile(d.amount, 0.9) as p90",
+            OutputMode::Object,
+            "d.state",
+            GroupStrategy::Sorted,
+            SALES,
+        )
+        .unwrap();
+        assert_eq!(
+            output,
+            concat!(
+                "{\"state\":\"IA\",\"names\":1,\"amount_median\":5,\"p90\":5}\n",
+                "{\"state\":\"MN\",\"names\":3,\"amount_median\":2,\"p90\":9}\n",
+            )
+        );
+        // "n/a" is skipped by both quantiles
+        let items: Vec<_> = summary.errors.iter().map(|e| e.item.as_str()).collect();
+        assert_eq!(
+            items,
+            ["median(d.amount)", "approx_quantile(d.amount, 0.9)"]
         );
     }
 
