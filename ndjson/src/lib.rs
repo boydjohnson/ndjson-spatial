@@ -1,4 +1,5 @@
 pub mod aggregate;
+pub mod cli;
 pub mod filter;
 pub mod from_csv;
 pub mod from_json;

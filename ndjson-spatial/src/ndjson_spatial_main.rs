@@ -15,12 +15,14 @@
 */
 
 use clap::{Arg, ArgAction, Command};
+use ndjson::cli;
 use std::{fs::File, io::Write, process::exit};
 
 mod area;
 mod centroid;
 mod common;
 mod from_geojson;
+mod functions;
 mod intersection;
 mod join_contains;
 mod nearest_distance;
@@ -32,7 +34,14 @@ use transform::CrsSpecification;
 fn main() {
     let args = parse_args().get_matches();
 
-    if let Some("nearest-distance") = args.subcommand_name() {
+    let registry = functions::registry();
+    if let Some(args) = args.subcommand_matches("select") {
+        exit(cli::run_select(args, &registry));
+    } else if let Some(args) = args.subcommand_matches("filter") {
+        exit(cli::run_filter(args, &registry));
+    } else if let Some(args) = args.subcommand_matches("sort") {
+        exit(cli::run_sort(args, &registry));
+    } else if let Some("nearest-distance") = args.subcommand_name() {
         let args = args
             .subcommand_matches("nearest-distance")
             .expect("subcommand was correctly tested for");
@@ -221,9 +230,20 @@ fn to_crs_specification(epsg: Option<&str>, proj4: Option<&str>) -> CrsSpecifica
     }
 }
 
+const SPATIAL_FUNCTIONS: &str = "Geometry functions (g is a GeoJSON geometry or Feature):\n  \
+    area length geodesic_area geodesic_length centroid point_on_surface bbox x y\n  \
+    geom_type num_points is_valid is_empty convex_hull make_valid to_wkt from_wkt\n  \
+    simplify(g, tol) buffer(g, d) transform(g, from, to)\n  \
+    distance intersects contains within (g, wkt or geometry)\n  \
+    geohash(g, precision) quadkey(g, zoom) h3(g, res)\n  \
+    aggregates: extent centroid_agg union_agg";
+
 fn parse_args() -> Command {
     Command::new("ndjson-spatial")
         .about("computes spatial metrics on new-line delimited json")
+        .subcommand(cli::select_command().after_help(SPATIAL_FUNCTIONS))
+        .subcommand(cli::filter_command().after_help(SPATIAL_FUNCTIONS))
+        .subcommand(cli::sort_command())
         .subcommand(
             Command::new("nearest-distance")
                 .about("compute the distance to the nearest point in 'reference' json file")
