@@ -15,9 +15,25 @@
 */
 
 use geo::BoundingRect;
-use geojson::GeometryValue;
+use geojson::{GeoJson, GeometryValue};
+use ndjson_common::error::NdJsonSpatialError;
 use rstar::primitives::{GeomWithData, Rectangle};
-use std::convert::TryFrom;
+use std::{convert::TryFrom, fs::File, io::Read};
+
+/// Reads a whole reference GeoJSON file.
+pub fn read_geojson_file(mut reference_file: File) -> Result<GeoJson, NdJsonSpatialError> {
+    let mut geojson_string = String::new();
+
+    reference_file
+        .read_to_string(&mut geojson_string)
+        .map_err(|e| {
+            NdJsonSpatialError::Error(format!("Error: reading from reference file {}", e))
+        })?;
+    let json_data = geojson_string
+        .parse::<GeoJson>()
+        .map_err(|e| NdJsonSpatialError::Error(format!("Error parsing geojson: {}", e)))?;
+    Ok(json_data)
+}
 
 pub enum GeometryType {
     Point,
@@ -66,10 +82,19 @@ pub type IndexedGeometry = GeomWithData<Rectangle<[f64; 2]>, geos::Geometry>;
 /// Converts a GeoJSON geometry for indexing. `None` if it is empty or
 /// GEOS can't represent it.
 pub fn index_geometry(geometry: &geojson::Geometry) -> Option<IndexedGeometry> {
+    let (rect, geos_geometry) = to_geos_with_rect(geometry)?;
+    Some(GeomWithData::new(rect, geos_geometry))
+}
+
+/// A GeoJSON geometry as GEOS plus its bounding rectangle. `None` if it is
+/// empty or GEOS can't represent it.
+pub fn to_geos_with_rect(
+    geometry: &geojson::Geometry,
+) -> Option<(Rectangle<[f64; 2]>, geos::Geometry)> {
     let geo_geometry = geo::Geometry::<f64>::try_from(geometry).ok()?;
     let rect = geo_geometry.bounding_rect()?;
     let geos_geometry = geos::Geometry::try_from(&geo_geometry).ok()?;
-    Some(GeomWithData::new(
+    Some((
         Rectangle::from_corners(rect.min().x_y().into(), rect.max().x_y().into()),
         geos_geometry,
     ))

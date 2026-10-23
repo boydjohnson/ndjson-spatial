@@ -14,7 +14,7 @@
 * limitations under the License.
 */
 
-use crate::common::{index_geometry, GeometryType};
+use crate::common::{index_geometry, read_geojson_file, GeometryType};
 use geojson::GeoJson;
 use geos::Geom;
 use ndjson_common::{
@@ -23,25 +23,7 @@ use ndjson_common::{
     ndjson::NdJsonGeojsonReader,
 };
 use rstar::{RTree, RTreeObject};
-use std::{
-    convert::TryInto,
-    fs::File,
-    io::{Read, Write},
-};
-
-pub fn read_geojson_file(mut reference_file: File) -> Result<GeoJson, NdJsonSpatialError> {
-    let mut geojson_string = String::new();
-
-    reference_file
-        .read_to_string(&mut geojson_string)
-        .map_err(|e| {
-            NdJsonSpatialError::Error(format!("Error: reading from reference file {}", e))
-        })?;
-    let json_data = geojson_string
-        .parse::<GeoJson>()
-        .map_err(|e| NdJsonSpatialError::Error(format!("Error parsing geojson: {}", e)))?;
-    Ok(json_data)
-}
+use std::{convert::TryInto, fs::File, io::Write};
 
 pub fn intersection(reference_file: File, geometry_type: &str) -> Result<(), NdJsonSpatialError> {
     let features = read_geojson_file(reference_file)?;

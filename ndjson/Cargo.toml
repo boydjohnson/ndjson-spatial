@@ -10,7 +10,6 @@ description = "Command line tool for creating, filtering, processing ndjson"
 [dependencies]
 clap = { version = "4.6", features = ["cargo"] }
 csv = "1.1"
-geojson = "^0.19"
 itertools = "^0.10"
 ndjson-common = { path = "../ndjson-common" }
 ordered-float = "^2.0"
