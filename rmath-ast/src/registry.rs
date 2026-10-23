@@ -51,8 +51,10 @@ use yajlish_ndjson::Selector;
 /// value out.
 pub type ScalarFn = Arc<dyn Fn(&[Value]) -> Result<Value, EvalError> + Send + Sync>;
 
-/// Makes a fresh accumulator for an aggregate function.
-pub type AggregateFn = Arc<dyn Fn() -> Box<dyn Accumulator> + Send + Sync>;
+/// Makes a fresh accumulator for an aggregate function from the values of
+/// its constant parameters (see [`Function::aggregate_with_params`]), or
+/// says why they are wrong.
+pub type AggregateFn = Arc<dyn Fn(&[Value]) -> Result<Box<dyn Accumulator>, String> + Send + Sync>;
 
 /// How many arguments a function takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +128,7 @@ pub struct Function {
     null_propagates: bool,
     unbounded: bool,
     extreme: Option<Extreme>,
+    params_from: Option<usize>,
     kind: FunctionKind,
 }
 
@@ -142,6 +145,7 @@ impl Function {
             null_propagates: true,
             unbounded: false,
             extreme: None,
+            params_from: None,
             kind: FunctionKind::Scalar(Arc::new(f)),
         }
     }
@@ -158,6 +162,32 @@ impl Function {
             null_propagates: false,
             unbounded: false,
             extreme: None,
+            params_from: None,
+            kind: FunctionKind::Aggregate(Arc::new(move |_: &[Value]| Ok(new()))),
+        }
+    }
+
+    /// An aggregate function whose arguments from index `params_from` on are
+    /// constant parameters (the `0.9` of `approx_quantile(d.x, 0.9)`) rather
+    /// than values per record. They are evaluated once when the list is
+    /// compiled, and `new` gets the ones the call gave to make each
+    /// accumulator, or returns why they are wrong.
+    pub fn aggregate_with_params<F>(
+        name: &'static str,
+        arity: Arity,
+        params_from: usize,
+        new: F,
+    ) -> Self
+    where
+        F: Fn(&[Value]) -> Result<Box<dyn Accumulator>, String> + Send + Sync + 'static,
+    {
+        Function {
+            name,
+            arity,
+            null_propagates: false,
+            unbounded: false,
+            extreme: None,
+            params_from: Some(params_from),
             kind: FunctionKind::Aggregate(Arc::new(new)),
         }
     }
@@ -208,10 +238,17 @@ impl Function {
         self.extreme
     }
 
-    /// A fresh accumulator, or `None` for a scalar function.
-    pub fn accumulator(&self) -> Option<Box<dyn Accumulator>> {
+    /// For an aggregate with constant parameters, the index of the first.
+    pub fn params_from(&self) -> Option<usize> {
+        self.params_from
+    }
+
+    /// A fresh accumulator given the values of the call's constant
+    /// parameters (none for most aggregates), or why they are wrong. `None`
+    /// for a scalar function.
+    pub fn accumulator(&self, params: &[Value]) -> Option<Result<Box<dyn Accumulator>, String>> {
         match &self.kind {
-            FunctionKind::Aggregate(new) => Some(new()),
+            FunctionKind::Aggregate(new) => Some(new(params)),
             FunctionKind::Scalar(_) => None,
         }
     }
@@ -410,6 +447,11 @@ pub enum ResolveError {
     Bare {
         item: usize,
     },
+    /// A bad constant parameter of an aggregate (`approx_quantile(d.x, 2)`).
+    Parameter {
+        name: &'static str,
+        message: String,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -450,6 +492,7 @@ impl fmt::Display for ResolveError {
                  use first(), last(), argmax() or argmin() instead",
                 item
             ),
+            ResolveError::Parameter { name, message } => write!(f, "{}(): {}", name, message),
         }
     }
 }
@@ -610,6 +653,8 @@ mod tests {
                 "abs",
                 "acos",
                 "acosh",
+                "approx_count_distinct",
+                "approx_quantile",
                 "argmax",
                 "argmin",
                 "asin",
@@ -634,6 +679,7 @@ mod tests {
                 "log",
                 "log10",
                 "max",
+                "median",
                 "min",
                 "sin",
                 "sinh",

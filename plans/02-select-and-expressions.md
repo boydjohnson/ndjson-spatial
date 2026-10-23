@@ -185,8 +185,9 @@ Findings from reading `rmath-ast` (`src/math.lalrpop`, `src/parser/ast.rs`):
    `count_distinct collect`. `AggregateList::compile` splits a list into
    accumulator slots and finishing expressions and applies the bare-column
    rules below; plain `resolve` rejects aggregate calls. Sketches
-   (`approx_count_distinct`, `approx_quantile`, `median`, `approx_top_k`) are
-   still to do.
+   `approx_count_distinct`, `approx_quantile` and `median` are done (see
+   [03](03-grouping-and-aggregation.md#sketches-for-distinct-and-quantile));
+   `approx_top_k` is still to do.
 7. **Missing pieces.** ~~comparisons, boolean ops, `in`, `is null`, and an
    evaluator~~ (done: `Expr::Compare/And/Or/Not/IsNull/In`, evaluated with
    three-valued `null` logic and short-circuiting; `CompiledExpr::eval_bool`

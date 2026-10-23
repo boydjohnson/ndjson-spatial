@@ -993,6 +993,32 @@ mod tests {
     }
 
     #[test]
+    fn test_approximate_aggregates() {
+        let (output, summary) = grouped(
+            "d.state, approx_count_distinct(d.name) as names, median(d.amount), \
+             approx_quantile(d.amount, 0.9) as p90",
+            OutputMode::Object,
+            "d.state",
+            GroupStrategy::Sorted,
+            SALES,
+        )
+        .unwrap();
+        assert_eq!(
+            output,
+            concat!(
+                "{\"state\":\"IA\",\"names\":1,\"amount_median\":5,\"p90\":5}\n",
+                "{\"state\":\"MN\",\"names\":3,\"amount_median\":2,\"p90\":9}\n",
+            )
+        );
+        // "n/a" is skipped by both quantiles
+        let items: Vec<_> = summary.errors.iter().map(|e| e.item.as_str()).collect();
+        assert_eq!(
+            items,
+            ["median(d.amount)", "approx_quantile(d.amount, 0.9)"]
+        );
+    }
+
+    #[test]
     fn test_unsorted_by_is_an_error() {
         let reversed: String = SALES.lines().rev().map(|l| format!("{}\n", l)).collect();
         let err = grouped(

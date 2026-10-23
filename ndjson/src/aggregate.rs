@@ -187,8 +187,8 @@ mod tests {
     #[test]
     fn test_agg_errors() {
         assert_eq!(
-            agg(&["d.foo"], &[("median", "d.quz")], HASH, INPUT).unwrap_err(),
-            NdJsonSpatialError::Error("unknown aggregate function 'median'".into())
+            agg(&["d.foo"], &[("mode", "d.quz")], HASH, INPUT).unwrap_err(),
+            NdJsonSpatialError::Error("unknown aggregate function 'mode'".into())
         );
         assert_eq!(
             agg(&["d.foo"], &[("abs", "d.quz")], HASH, INPUT).unwrap_err(),
