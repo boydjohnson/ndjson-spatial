@@ -434,7 +434,7 @@ fn parse_args() -> ArgMatches {
                     Arg::new("allow-unbounded")
                         .long("allow-unbounded")
                         .action(ArgAction::SetTrue)
-                        .help("Allow count_distinct and collect, whose memory grows with the input"),
+                        .help("Allow count_distinct and collect, whose memory grows with the input (approx_count_distinct doesn't need this)"),
                 ),
         )
         .subcommand(
@@ -500,7 +500,8 @@ fn parse_args() -> ArgMatches {
                      end. With --sorted, input sorted by the group key is grouped in \
                      constant memory.\n\n\
                      Functions: count sum avg min max first last var var_pop stddev \
-                     stddev_pop, and with --allow-unbounded count_distinct collect.",
+                     stddev_pop median approx_count_distinct, and with --allow-unbounded \
+                     count_distinct collect.",
                 )
                 .arg(
                     Arg::new("group-by")
@@ -547,7 +548,7 @@ fn parse_args() -> ArgMatches {
                     Arg::new("allow-unbounded")
                         .long("allow-unbounded")
                         .action(ArgAction::SetTrue)
-                        .help("Allow count_distinct and collect, whose memory grows with the input"),
+                        .help("Allow count_distinct and collect, whose memory grows with the input (approx_count_distinct doesn't need this)"),
                 ),
         )
         .subcommand(

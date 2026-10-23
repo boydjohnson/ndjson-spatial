@@ -11,6 +11,7 @@ pub mod eval;
 )]
 pub mod parser;
 pub mod registry;
+pub mod sketch;
 
 pub use aggregate::{Accumulator, AggregateList, AggregateState};
 pub use eval::EvalError;
