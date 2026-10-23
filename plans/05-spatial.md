@@ -60,7 +60,7 @@ ndjson-spatial select 'extent(d.geometry)'
 | `length`, `bbox`, `simplify`, `buffer`, `convex-hull`, `make-valid` | S0 | new | Shorthands like the above; the real work is the function. |
 | `explode-multi` | S0 | new | MultiPolygon → one feature per Polygon (like `ndjson explode`). |
 | `validate` | S0 | new | Report invalid geometries with line numbers; `--fix` applies `make_valid`. |
-| `join-contains --ref` | S2 | change | Point-in-polygon / containment join; R-tree over the ref file. Adopt `--on`-style options from [04](04-sort-and-join.md) (`--left`, `--semi`, `--anti`, `--into`). |
+| `join-contains --ref` | S2 | done | Containment join; R-tree over the ref file, confirmed with GEOS. `--within` flips it to point-in-polygon. `--left`, `--semi`, `--anti`, and `--into` (alias of `--field-name`) for the matches' properties. |
 | `intersection --ref` | S2 | change | Same conventions; today only polygon/polygon. |
 | `nearest-distance --ref` | S2 | change | Same conventions; today only point/point. Add `--k` nearest. |
 | `tile --zoom z` | S0 | new (later) | Clip each feature to the tiles it touches; emits one record per (feature, tile). Pairs with `partition` for map-tile pipelines. |
@@ -76,9 +76,10 @@ of [04](04-sort-and-join.md)'s merge join; a later phase.
 
 ## Housekeeping
 
-- clap 2 → 4 (same migration just done for `ndjson`).
-- geo 0.14 → current, geojson 0.19 → current, geos 7 → current, gdal 0.7 →
+- ~~clap 2 → 4 (same migration just done for `ndjson`).~~ Done.
+- ~~geo 0.14 → current, geojson 0.19 → current, geos 7 → current, gdal 0.7 →
   current. `geojson-rstar` is a git dependency; publish or replace with
-  `rstar` + `geo` directly.
+  `rstar` + `geo` directly.~~ Done: `geojson-rstar` replaced with `rstar`
+  primitives, and the `ndjson` crate's unused geojson 0.19 dependency is gone.
 - Decide whether GDAL is still needed once `transform` uses `proj` directly;
   dropping it would make the spatial binary much easier to build.

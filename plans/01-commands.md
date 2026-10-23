@@ -73,7 +73,8 @@ Summary only; details in [05-spatial.md](05-spatial.md).
 | `length`, `bbox`, `simplify`, `buffer`, `convex-hull`, `make-valid`, `explode-multi` | S0 | new |
 | `extent` | S0 | new (aggregate) |
 | `geohash` / `quadkey` / `h3` cell assignment | S0 | new (as functions) |
-| `intersection --ref`, `join-contains --ref`, `nearest-distance --ref` | S2 (ref in R-tree) | exists → change to the shared `--ref`/`--on` conventions |
+| `join-contains --ref` | S2 (ref in R-tree) | done: `--within`, `--left`/`--semi`/`--anti`, `--into` |
+| `intersection --ref`, `nearest-distance --ref` | S2 (ref in R-tree) | exists → change to the shared `--ref`/`--on` conventions |
 
 ## Naming conventions
 

@@ -64,7 +64,8 @@ Every command in [01-commands.md](01-commands.md) is tagged with one of:
   This affects `sort`, `agg`, and `join` keys.
 - ~~`filter` uses a separate nom-4 grammar in `ndjson-common` that only supports
   `selector <op> literal`.~~ Done: `filter` is on rmath-ast.
-- `ndjson-spatial` is still on clap 2, geo 0.14, gdal 0.7.
+- ~~`ndjson-spatial` is still on clap 2, geo 0.14, gdal 0.7.~~ Done: clap 4,
+  geo 0.33, gdal 0.19.
 - `rmath-ast` (now in `rmath-ast/` in this workspace) is parse-only
   (no evaluator), and its lexer has issues called out in
   [02](02-select-and-expressions.md#rmath-ast-changes).

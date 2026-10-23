@@ -22,6 +22,7 @@ mod centroid;
 mod common;
 mod from_geojson;
 mod intersection;
+mod join_contains;
 mod nearest_distance;
 mod to_geojson;
 mod transform;
@@ -56,6 +57,8 @@ fn main() {
             )
             .expect("Unable to write to stderr");
         }
+    } else if let Some(args) = args.subcommand_matches("join-contains") {
+        exit(run_join_contains(args));
     } else if let Some("centroid") = args.subcommand_name() {
         centroid::compute_centroid();
     } else if let Some("intersection") = args.subcommand_name() {
@@ -138,6 +141,72 @@ fn main() {
     }
 }
 
+fn run_join_contains(args: &clap::ArgMatches) -> i32 {
+    let filename = args
+        .get_one::<String>("reference")
+        .expect("reference is required");
+    let reference_file = match File::open(filename) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("join-contains: error opening reference file: {}", e);
+            return 1;
+        }
+    };
+    let kind = if args.get_flag("left") {
+        join_contains::JoinKind::Left
+    } else if args.get_flag("semi") {
+        join_contains::JoinKind::Semi
+    } else if args.get_flag("anti") {
+        join_contains::JoinKind::Anti
+    } else {
+        join_contains::JoinKind::Inner
+    };
+    let direction = if args.get_flag("within") {
+        join_contains::Direction::Within
+    } else {
+        join_contains::Direction::Contains
+    };
+    let options = join_contains::JoinOptions {
+        kind,
+        direction,
+        field_name: args
+            .get_one::<String>("field-name")
+            .expect("field-name has a default")
+            .clone(),
+    };
+    let input = std::io::BufReader::with_capacity(1 << 20, std::io::stdin().lock());
+    let mut output = std::io::BufWriter::with_capacity(1 << 20, std::io::stdout().lock());
+    match join_contains::join_contains(reference_file, &options, input, &mut output) {
+        Ok(summary) => {
+            if summary.skipped_reference > 0 {
+                eprintln!(
+                    "join-contains: skipped {} reference feature{} without a usable geometry",
+                    summary.skipped_reference,
+                    if summary.skipped_reference == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                );
+            }
+            if let Some((line, err)) = summary.first_error {
+                eprintln!(
+                    "join-contains: skipped {} line{} (first at line {}: {})",
+                    summary.skipped_stream,
+                    if summary.skipped_stream == 1 { "" } else { "s" },
+                    line,
+                    err
+                );
+            }
+            0
+        }
+        Err(ndjson_common::error::NdJsonSpatialError::Error(e)) => {
+            eprintln!("join-contains: {}", e);
+            1
+        }
+    }
+}
+
 fn to_crs_specification(epsg: Option<&str>, proj4: Option<&str>) -> CrsSpecification {
     match (epsg, proj4) {
         (Some(epsg), None) => match epsg.parse() {
@@ -169,21 +238,49 @@ fn parse_args() -> Command {
         )
         .subcommand(
             Command::new("join-contains")
-                .about("joins ndjson objects with contained points, lines, polygons, or multipolygons in a reference file")
+                .about("joins geojson features with the reference features they contain, or with --within the ones that contain them")
                 .arg(
                     Arg::new("reference")
                         .short('r')
                         .long("ref")
                         .required(true)
                         .num_args(1)
-                        .help("The geojson file to join on."),
+                        .help("The geojson FeatureCollection to join on; held in memory in an R-tree"),
                 )
                 .arg(
                     Arg::new("field-name")
                         .long("field-name")
-                        .required(true)
+                        .visible_alias("into")
                         .num_args(1)
-                        .help("The name of the field to store the contained objects"),
+                        .default_value("matches")
+                        .conflicts_with_all(["semi", "anti"])
+                        .help("The property to store the matching reference features' properties in, as an array"),
+                )
+                .arg(
+                    Arg::new("within")
+                        .long("within")
+                        .action(ArgAction::SetTrue)
+                        .help("Join each feature with the reference features that contain it (point-in-polygon), instead of the ones it contains"),
+                )
+                .arg(
+                    Arg::new("left")
+                        .long("left")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with_all(["semi", "anti"])
+                        .help("Also write features without a match, with an empty array"),
+                )
+                .arg(
+                    Arg::new("semi")
+                        .long("semi")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("anti")
+                        .help("Write features with a match, unchanged"),
+                )
+                .arg(
+                    Arg::new("anti")
+                        .long("anti")
+                        .action(ArgAction::SetTrue)
+                        .help("Write features without a match, unchanged"),
                 ),
         )
         .subcommand(
@@ -328,5 +425,29 @@ mod tests {
             m.get_one::<String>("field-name").map(String::as_str),
             Some("a")
         );
+    }
+
+    #[test]
+    fn join_contains_kinds_conflict() {
+        let parse = |args: &[&str]| {
+            parse_args().try_get_matches_from(
+                ["ndjson-spatial", "join-contains", "-r", "ref.geojson"]
+                    .iter()
+                    .chain(args),
+            )
+        };
+        let m = parse(&["--within", "--left"]).expect("valid join-contains args");
+        let m = m
+            .subcommand_matches("join-contains")
+            .expect("join-contains");
+        assert!(m.get_flag("within") && m.get_flag("left"));
+        assert_eq!(
+            m.get_one::<String>("field-name").map(String::as_str),
+            Some("matches")
+        );
+        assert!(parse(&["--into", "zones"]).is_ok());
+        assert!(parse(&["--semi", "--anti"]).is_err());
+        assert!(parse(&["--left", "--anti"]).is_err());
+        assert!(parse(&["--semi", "--into", "zones"]).is_err());
     }
 }
