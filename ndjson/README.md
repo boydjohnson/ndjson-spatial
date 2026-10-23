@@ -14,7 +14,7 @@ SUBCOMMANDS:
     filter        returns only json that matches filter expression
     from-json     Converts json to ndjson
     head          Outputs the first n records
-    join          joins json file to ndjson stream
+    join          Joins two ndjson inputs on a key
     pick-field    picks a field from all of the ndjson objects
     tail          Outputs the last n records
 ```
@@ -75,18 +75,41 @@ cat <file.ndjson> | ndjson tail -n 5
 
 ### Join
 
-Join two ndjson streams, one from a file and one from stdin.
+Join two ndjson inputs on a key. Keys are comma-separated expressions,
+matched as a tuple and compared in the same order `ndjson sort` uses (so `1`
+and `1.0` match). A key with a `null` (or missing field), array or object
+part never matches. On field collisions the right record's value wins, unless
+`--prefix-right r_` renames its fields or `--into d.right` nests the whole
+right record.
+
+By default `join` is a merge join: both inputs must be sorted ascending by
+their keys, and memory holds only the right records of one key (at most
+`--max-run`, default 1000000). A record out of order is an error that names
+the input and line. Either input can be `-` for stdin.
 
 ```sh
-cat <file1.ndjson> | ndjson join --ref <file2.ndjson> --ref-fields <selector>... --stream-fields <selector>...
+ndjson sort -k d.state -k d.county < counties.ndjson > counties.sorted.ndjson
+ndjson sort -k d.state -k d.county < population.ndjson > population.sorted.ndjson
+ndjson join counties.sorted.ndjson population.sorted.ndjson --on 'd.state, d.county'
+cat left.ndjson | ndjson join - right.ndjson --left-on d.st --right-on d.state
 ```
 
-### Example
-Join on state and county names.
+With `--ref` the reference file is loaded into memory as the right side and
+the left input (stdin unless given) can be in any order, which it keeps:
 
 ```sh
-cat state_county.ndjson | ndjson join --ref state_county_population.ndjson --ref-fields d.state d.county --stream-fields d.state d.county
+cat big.ndjson | ndjson join --ref lookup.ndjson --on d.code
 ```
+
+Join types: inner (default), `--left` (also unmatched left records),
+`--right` and `--outer` (also unmatched right records, or both; merge join
+only), `--semi` (left records with a match, once each) and `--anti` (left
+records without a match). Unmatched, `--semi` and `--anti` records are
+written unchanged.
+
+`--ref-fields` and `--stream-fields` still work but are deprecated: they are
+now `--right-on` and `--left-on`, and their fields are matched together as one
+composite key rather than each pair on its own.
 
 ### Agg
 Perform a group-by operation and then get Sum, Min, Max, or Count information.

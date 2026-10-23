@@ -82,6 +82,17 @@ run (documented; `--max-run N` guards it).
   overwrites.
 - Order check on both inputs, like `--by`; error names the file and line.
 
+Status: done. Positional `LEFT RIGHT` inputs (`-` is stdin); `--on` takes
+one comma-separated list (`--on 'd.state, d.county'`), like `--by`. The
+right side's run is the one buffered, at most `--max-run` records (default
+1000000); `--semi`/`--anti` buffer nothing. An inner or semi join stops
+reading once no more output is possible. A key with a `null`, array or
+object component, or one that fails to evaluate (counted on stderr), never
+matches but still counts as unmatched for the outer types. Unmatched,
+`--semi` and `--anti` records are written unchanged; an unmatched right
+record with `--prefix-right`/`--into` is shaped as it would be in a joined
+record. A line that isn't a JSON object is an error in both join modes.
+
 ### Hash join (`--ref`) — S2
 
 Today's mode, kept for the common case "small lookup table, big unsorted
@@ -95,6 +106,9 @@ The reference file is loaded into a hash map keyed by the composite key; the
 stream is not sorted and order is preserved. Supports `--left`, `--semi`,
 `--anti`. `--ref` is the only way to get an in-memory join, so the cost is
 always visible in the command line.
+
+Status: done. Keyed by the memcomparable encoding in a `HashMap`. `--right`
+and `--outer` are rejected with `--ref`.
 
 ## Migration
 
