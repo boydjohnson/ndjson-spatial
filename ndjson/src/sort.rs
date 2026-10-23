@@ -183,7 +183,7 @@ pub fn check<I: BufRead>(
     Ok(disorder)
 }
 
-fn record_key(
+pub(crate) fn record_key(
     keys: &[SortKey],
     line: &[u8],
     n: u64,

@@ -67,6 +67,18 @@ ls -lh ../target/release-ndjson/ndjson
 ```
 
 ```bash
+    ndjson head -n 10 | ndjson tail -n 10 | ndjson skip -n 100
+    ndjson sample -n 1000 [--seed 7]        # exactly 1000 records, uniformly
+    ndjson sample --rate 0.01               # each record with probability 1%
+    ndjson top -k 5 --by d.pop:d            # same as sort -k d.pop:d | head -n 5, in O(k) memory
+    ndjson sort -k d.state | ndjson uniq -c --by d.state
+    ndjson explode d.tags                   # one record per element of d.tags
+    ndjson flatten [--sep .] | ndjson unflatten
+    ndjson to-json                          # one JSON array
+    ndjson validate [--count]
+```
+
+```bash
     ndjson pick-field <expression>
 
     ndjson pick-field "d.properties.distance "

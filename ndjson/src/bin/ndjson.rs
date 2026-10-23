@@ -17,9 +17,10 @@
 use clap::{command, Arg, ArgAction, ArgMatches, Command};
 use ndjson::{
     aggregate::{aggregate, AggOptions},
-    filter, from_json,
+    explode, filter, flatten, from_json,
     group::{AggregateSummary, Grouping},
-    head, join, pick_field, select, sort, tail,
+    head, join, pick_field, sample, select, skip, sort, tail, to_json, top, uniq, validate,
+    Skipped,
 };
 use ndjson_common::{error::NdJsonSpatialError, json_selector_parser::parse_json_selector};
 use rmath_ast::FunctionRegistry;
@@ -250,6 +251,8 @@ fn main() {
             eprintln!("{:?}", e);
             exit(1);
         }
+    } else if let Some((name, args)) = args.subcommand() {
+        exit(run_small(name, args));
     }
 }
 
@@ -376,6 +379,143 @@ fn open_input(name: &str) -> Result<Box<dyn BufRead>, NdJsonSpatialError> {
     File::open(name)
         .map(|file| Box::new(BufReader::with_capacity(1 << 20, file)) as Box<dyn BufRead>)
         .map_err(|e| NdJsonSpatialError::Error(format!("unable to open {}: {}", name, e)))
+}
+
+/// Runs one of the commands that take no setup beyond their flags and
+/// returns the exit code.
+fn run_small(name: &str, args: &ArgMatches) -> i32 {
+    let mut input = BufReader::with_capacity(1 << 20, stdin().lock());
+    let mut output = BufWriter::with_capacity(1 << 20, stdout().lock());
+    let result = match name {
+        "skip" => {
+            let n = *args.get_one::<u64>("lines").expect("lines is required");
+            skip::skip(n, &mut input, &mut output).map(|_| 0)
+        }
+        "sample" => {
+            let sampling = match args.get_one::<f64>("rate") {
+                Some(p) => sample::Sampling::Rate(*p),
+                None => sample::Sampling::Reservoir(
+                    *args.get_one::<usize>("lines").expect("lines has a default"),
+                ),
+            };
+            let seed = args
+                .get_one::<u64>("seed")
+                .copied()
+                .unwrap_or_else(sample::random_seed);
+            sample::sample(sampling, seed, &mut input, &mut output).map(|_| 0)
+        }
+        "top" => sort_keys(args, "by").and_then(|keys| {
+            let k = *args.get_one::<usize>("limit").expect("limit has a default");
+            top::top(k, &keys, args.get_flag("desc"), &mut input, &mut output)
+                .map(|summary| report_key_errors(name, &summary))
+        }),
+        "uniq" => sort_keys(args, "by").and_then(|keys| {
+            let options = uniq::UniqOptions {
+                keys,
+                keep: if args.get_flag("repeated") {
+                    uniq::Keep::Repeated
+                } else if args.get_flag("unique") {
+                    uniq::Keep::Unique
+                } else {
+                    uniq::Keep::All
+                },
+                count_field: if args.get_flag("count") {
+                    args.get_one::<String>("count-field").cloned()
+                } else {
+                    None
+                },
+            };
+            uniq::uniq(&options, &mut input, &mut output)
+                .map(|summary| report_key_errors(name, &summary))
+        }),
+        "explode" => explode::parse_path(
+            args.get_one::<String>("selector")
+                .expect("selector is required"),
+        )
+        .and_then(|path| {
+            explode::explode(&path, args.get_flag("keep-empty"), &mut input, &mut output)
+        })
+        .map(|skipped| report_skipped(name, &skipped)),
+        "flatten" => flatten::flatten(
+            separator(args),
+            args.get_flag("arrays"),
+            &mut input,
+            &mut output,
+        )
+        .map(|skipped| report_skipped(name, &skipped)),
+        "unflatten" => flatten::unflatten(separator(args), &mut input, &mut output)
+            .map(|skipped| report_skipped(name, &skipped)),
+        "to-json" => to_json::to_json(&mut input, &mut output).map(|_| 0),
+        "validate" => {
+            let count = args.get_flag("count");
+            validate::validate(&mut input, !count).map(|summary| {
+                if let Some((line, err)) = &summary.first_invalid {
+                    eprintln!("validate: line {}: {}", line, err);
+                }
+                if count {
+                    println!(
+                        "{}",
+                        serde_json::json!({"records": summary.records, "invalid": summary.invalid})
+                    );
+                }
+                if summary.invalid == 0 {
+                    0
+                } else {
+                    1
+                }
+            })
+        }
+        _ => unreachable!("every subcommand is handled"),
+    };
+    match result {
+        Ok(code) => code,
+        Err(NdJsonSpatialError::Error(e)) => {
+            eprintln!("{}: {}", name, e);
+            2
+        }
+    }
+}
+
+fn sort_keys(args: &ArgMatches, id: &str) -> Result<Vec<sort::SortKey>, NdJsonSpatialError> {
+    let registry = FunctionRegistry::default();
+    args.get_many::<String>(id)
+        .into_iter()
+        .flatten()
+        .map(|k| sort::SortKey::parse(&registry, k))
+        .collect()
+}
+
+fn report_key_errors(name: &str, summary: &sort::SortSummary) -> i32 {
+    if let Some((n, e)) = &summary.first_key_error {
+        eprintln!(
+            "{}: {} record{} had a key that failed to evaluate and compared as null (first at record {}: {})",
+            name,
+            summary.key_errors,
+            if summary.key_errors == 1 { "" } else { "s" },
+            n,
+            e
+        );
+    }
+    0
+}
+
+fn report_skipped(name: &str, skipped: &Skipped) -> i32 {
+    if let Some((n, reason)) = &skipped.first {
+        eprintln!(
+            "{}: skipped {} record{} (first at record {}: {})",
+            name,
+            skipped.count,
+            if skipped.count == 1 { "" } else { "s" },
+            n,
+            reason
+        );
+    }
+    0
+}
+
+fn separator(args: &ArgMatches) -> &str {
+    args.get_one::<String>("separator")
+        .expect("separator has a default")
 }
 
 fn run_sort(args: &ArgMatches) -> i32 {
@@ -789,6 +929,165 @@ fn parse_args() -> ArgMatches {
                 .about("Outputs the last n records")
                 .arg(lines_arg()),
         )
+        .subcommand(
+            Command::new("skip")
+                .about("Outputs every record after the first n")
+                .arg(
+                    Arg::new("lines")
+                        .short('n')
+                        .long("lines")
+                        .value_name("n")
+                        .required(true)
+                        .value_parser(clap::value_parser!(u64))
+                        .help("Number of records to skip"),
+                ),
+        )
+        .subcommand(
+            Command::new("sample")
+                .about("Outputs a uniform random sample of the records, in input order")
+                .long_about(
+                    "Outputs a uniform random sample of the records, in input order. With -n, \
+                     exactly n records (reservoir sampling; memory holds n records). With \
+                     --rate, each record independently with probability p (constant memory).",
+                )
+                .arg(lines_arg().help("Number of records to keep").conflicts_with("rate"))
+                .arg(
+                    Arg::new("rate")
+                        .long("rate")
+                        .value_name("p")
+                        .value_parser(parse_probability)
+                        .help("Keep each record with this probability, from 0 to 1"),
+                )
+                .arg(
+                    Arg::new("seed")
+                        .long("seed")
+                        .value_name("n")
+                        .value_parser(clap::value_parser!(u64))
+                        .help("Seed the random choice, for the same sample every run"),
+                ),
+        )
+        .subcommand(
+            Command::new("top")
+                .about("Outputs the first k records by some keys, in O(k) memory")
+                .long_about(
+                    "Outputs the first k records ordered by some keys: the same as \
+                     `sort -k ... | head -n k`, holding only k records in memory. Keys order as \
+                     in sort; ties keep input order.",
+                )
+                .arg(
+                    Arg::new("limit")
+                        .short('k')
+                        .short_alias('n')
+                        .long("limit")
+                        .value_name("k")
+                        .default_value("10")
+                        .value_parser(clap::value_parser!(usize))
+                        .help("Number of records"),
+                )
+                .arg(
+                    Arg::new("by")
+                        .long("by")
+                        .help("Expression to order by, with :d for descending; repeat for more keys. e.g. --by d.pop:d")
+                        .num_args(1)
+                        .action(ArgAction::Append)
+                        .value_name("expr")
+                        .required(true),
+                )
+                .arg(
+                    Arg::new("desc")
+                        .long("desc")
+                        .action(ArgAction::SetTrue)
+                        .help("Take the last k instead of the first, largest first"),
+                ),
+        )
+        .subcommand(
+            Command::new("uniq")
+                .about("Drops adjacent duplicate records, like uniq(1)")
+                .long_about(
+                    "Writes the first record of each run of adjacent equal records, like uniq(1); \
+                     sort first to drop all duplicates. Records are equal as JSON values (1 equals \
+                     1.0, key order doesn't matter), or with --by when their keys are.",
+                )
+                .arg(
+                    Arg::new("by")
+                        .long("by")
+                        .help("Compare this expression instead of the whole record; repeat for more keys")
+                        .num_args(1)
+                        .action(ArgAction::Append)
+                        .value_name("expr"),
+                )
+                .arg(
+                    Arg::new("count")
+                        .short('c')
+                        .long("count")
+                        .action(ArgAction::SetTrue)
+                        .help("Add the number of records in the run as the first field; a record that isn't an object is wrapped as {\"count\": n, \"value\": record}"),
+                )
+                .arg(
+                    Arg::new("count-field")
+                        .long("count-field")
+                        .value_name("name")
+                        .default_value("count")
+                        .help("Field name for -c"),
+                )
+                .arg(
+                    Arg::new("repeated")
+                        .short('d')
+                        .long("repeated")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("unique")
+                        .help("Only output records that had duplicates"),
+                )
+                .arg(
+                    Arg::new("unique")
+                        .short('u')
+                        .long("unique")
+                        .action(ArgAction::SetTrue)
+                        .help("Only output records that had no duplicates"),
+                ),
+        )
+        .subcommand(
+            Command::new("explode")
+                .about("Outputs one record per element of an array field")
+                .arg(
+                    Arg::new("selector")
+                        .required(true)
+                        .help("The array field, e.g. d.tags; each output record has one element in its place"),
+                )
+                .arg(
+                    Arg::new("keep-empty")
+                        .long("keep-empty")
+                        .action(ArgAction::SetTrue)
+                        .help("Write records whose field is missing, null or [] once, with the field null, instead of dropping them"),
+                ),
+        )
+        .subcommand(
+            Command::new("flatten")
+                .about("Turns nested objects into dotted keys: {\"a\":{\"b\":1}} becomes {\"a.b\":1}")
+                .arg(separator_arg())
+                .arg(
+                    Arg::new("arrays")
+                        .long("arrays")
+                        .action(ArgAction::SetTrue)
+                        .help("Flatten arrays too, keyed by index: a.0, a.1"),
+                ),
+        )
+        .subcommand(
+            Command::new("unflatten")
+                .about("Turns dotted keys into nested objects, the inverse of flatten")
+                .arg(separator_arg()),
+        )
+        .subcommand(Command::new("to-json").about("Writes the records as one JSON array"))
+        .subcommand(
+            Command::new("validate")
+                .about("Checks that every line is JSON; exits 1 at the first that isn't")
+                .arg(
+                    Arg::new("count")
+                        .long("count")
+                        .action(ArgAction::SetTrue)
+                        .help("Read to the end and write {\"records\": n, \"invalid\": m}; still exits 1 if any line is invalid"),
+                ),
+        )
         .get_matches()
 }
 
@@ -800,4 +1099,20 @@ fn lines_arg() -> Arg {
         .default_value("10")
         .value_parser(clap::value_parser!(usize))
         .help("Number of records")
+}
+
+fn separator_arg() -> Arg {
+    Arg::new("separator")
+        .long("sep")
+        .value_name("sep")
+        .default_value(".")
+        .value_parser(clap::builder::NonEmptyStringValueParser::new())
+        .help("Separator between key parts")
+}
+
+fn parse_probability(s: &str) -> Result<f64, String> {
+    match s.parse::<f64>() {
+        Ok(p) if (0.0..=1.0).contains(&p) => Ok(p),
+        _ => Err(format!("{:?} is not a probability from 0 to 1", s)),
+    }
 }
