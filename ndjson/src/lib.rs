@@ -1,5 +1,7 @@
 pub mod aggregate;
+pub mod explode;
 pub mod filter;
+pub mod flatten;
 pub mod from_csv;
 pub mod from_json;
 pub mod group;
@@ -8,7 +10,14 @@ pub mod join;
 pub mod memcomparable;
 pub mod pick_field;
 mod records;
+pub mod sample;
 pub mod select;
+pub mod skip;
 pub mod sort;
 pub mod tail;
 pub mod to_json;
+pub mod top;
+pub mod uniq;
+pub mod validate;
+
+pub use records::Skipped;
