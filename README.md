@@ -73,9 +73,9 @@ ls -lh ../target/release-ndjson/ndjson
 ```
 
 ```bash
-    ndjson join --ref <ref> --ref-fields <ref-fields> --stream-fields <stream-fields>
+    ndjson join <left> <right> --on <keys>
 ```
-    - ref-fields, stream-fields should be space delimited list of 'd.properties.FIELD_NAME'
+    - keys are comma-separated expressions like 'd.properties.FIELD_NAME'; both inputs must be sorted by them, or use --ref <file> to load the right side into memory
 
 ## Proposed
 

@@ -14,113 +14,497 @@
 * limitations under the License.
 */
 
-use crate::filter::select_from_json_object;
-use ndjson_common::{
-    error::NdJsonSpatialError, json_selector_parser::Selector, ndjson::NdjsonReader,
+//! `ndjson join`: a merge join over two inputs sorted by the join key, or,
+//! with `--ref`, a hash join that loads the reference file into memory.
+//!
+//! Keys are tuples of expressions, compared in the order `ndjson sort` uses
+//! (see [`OrderedValue`]) through their
+//! [`memcomparable`](crate::memcomparable) encoding, so `1` and `1.0` are the
+//! same key. A key with a `null` (including a missing field), array or
+//! object component never matches, and neither does one that fails to
+//! evaluate; those records still count as unmatched for `--left`,
+//! `--right`, `--outer` and `--anti`.
+
+use crate::{
+    filter::legacy_selector,
+    head::flush,
+    memcomparable,
+    records::{io_error, write_record},
+    select::parse_key_list,
 };
+use ndjson_common::{error::NdJsonSpatialError, json_selector_parser::Selector};
 use ordered_float::OrderedFloat;
+use rmath_ast::{CompiledExpr, EvalError, FunctionRegistry};
 use serde_json::{Map, Number, Value};
 use std::{
     cmp::Ordering,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     io::{BufRead, Write},
 };
 
-/// Joins each record of `stream` to the records of `reference_reader` whose
-/// key matches.
-///
-/// The key is the tuple of the selected fields: a stream record matches a
-/// reference record only when every `stream_fields[i]` equals the
-/// corresponding `reference_fields[i]`. Records missing a key field, or whose
-/// key contains a `null`, array or object, never match. On field collisions
-/// the reference record's value wins.
-pub fn join<B: BufRead, S: BufRead, O: Write>(
-    reference_reader: &mut B,
-    reference_fields: Vec<Vec<Selector>>,
-    stream_fields: Vec<Vec<Selector>>,
-    stream: S,
-    mut out: O,
-) -> Result<(), NdJsonSpatialError> {
-    if reference_fields.is_empty() {
-        return Err(NdJsonSpatialError::Error(
-            "join needs at least one key field".to_owned(),
-        ));
-    }
-    if reference_fields.len() != stream_fields.len() {
-        return Err(NdJsonSpatialError::Error(format!(
-            "join needs the same number of reference fields ({}) and stream fields ({})",
-            reference_fields.len(),
-            stream_fields.len()
-        )));
-    }
-
-    let mut references: BTreeMap<Vec<OrderedValue>, Vec<Map<String, Value>>> = BTreeMap::new();
-
-    for g in NdjsonReader::new(reference_reader).flatten() {
-        if let Value::Object(o) = g {
-            match select_key(&o, &reference_fields) {
-                Ok(Some(key)) => references.entry(key).or_default().push(o),
-                Ok(None) => (),
-                Err(e) => {
-                    writeln!(
-                        std::io::stderr(),
-                        "Unable to select from reference object: {:?}",
-                        e
-                    )
-                    .expect("Unable to write to stderr");
-                }
-            }
-        }
-    }
-
-    for val in NdjsonReader::new(stream) {
-        let o = match val {
-            Ok(Value::Object(o)) => o,
-            Ok(_) => continue,
-            Err(e) => {
-                writeln!(std::io::stderr(), "Error reading: {:?}", e)
-                    .expect("Unable to write to stderr");
-                continue;
-            }
-        };
-
-        let key = match select_key(&o, &stream_fields) {
-            Ok(Some(key)) => key,
-            Ok(None) | Err(_) => continue,
-        };
-
-        if let Some(matches) = references.get(&key) {
-            for reference in matches {
-                let mut joined = o.clone();
-                for (k, v) in reference {
-                    joined.insert(k.to_owned(), v.to_owned());
-                }
-
-                writeln!(out, "{}", Value::Object(joined)).expect("Unable to write to stdout");
-            }
-        }
-    }
-    Ok(())
+/// Which records a join writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinType {
+    /// Every matching pair.
+    Inner,
+    /// Every matching pair, and left records without a match as they are.
+    Left,
+    /// Every matching pair, and right records without a match.
+    Right,
+    /// Every matching pair, and unmatched records from both sides.
+    Outer,
+    /// Left records with at least one match, once each, unchanged.
+    Semi,
+    /// Left records without a match, unchanged.
+    Anti,
 }
 
-/// Selects the composite join key from `object`. Returns `Ok(None)` when a key
-/// component is a `null`, array or object, which never join.
-fn select_key(
-    object: &Map<String, Value>,
-    fields: &[Vec<Selector>],
-) -> Result<Option<Vec<OrderedValue>>, NdJsonSpatialError> {
-    let mut key = Vec::with_capacity(fields.len());
-    for field in fields {
-        let v: OrderedValue = select_from_json_object(Value::Object(object.clone()), field)?.into();
-        if matches!(
-            v,
-            OrderedValue::Array(_) | OrderedValue::Object(_) | OrderedValue::Null
-        ) {
-            return Ok(None);
-        }
-        key.push(v);
+impl JoinType {
+    fn keeps_unmatched_left(self) -> bool {
+        matches!(self, JoinType::Left | JoinType::Outer | JoinType::Anti)
     }
-    Ok(Some(key))
+
+    fn keeps_unmatched_right(self) -> bool {
+        matches!(self, JoinType::Right | JoinType::Outer)
+    }
+
+    /// Whether matches are written as left and right merged together.
+    fn pairs(self) -> bool {
+        !matches!(self, JoinType::Semi | JoinType::Anti)
+    }
+}
+
+/// Where a right record's fields go in the joined record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RightFields {
+    /// Into the left record; on collisions the right value wins.
+    Merge,
+    /// Into the left record, each key prefixed (`--prefix-right r_`).
+    Prefix(String),
+    /// The whole right record nested at this path (`--into d.right`).
+    Into(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+pub struct JoinOptions {
+    pub left_on: Vec<CompiledExpr>,
+    pub right_on: Vec<CompiledExpr>,
+    pub kind: JoinType,
+    pub right_fields: RightFields,
+    /// The most right records with one key a merge join holds in memory.
+    pub max_run: usize,
+}
+
+pub const DEFAULT_MAX_RUN: usize = 1_000_000;
+
+impl JoinOptions {
+    /// An inner join on `left_on`/`right_on`, which must be the same,
+    /// non-zero, length.
+    pub fn new(
+        left_on: Vec<CompiledExpr>,
+        right_on: Vec<CompiledExpr>,
+    ) -> Result<Self, NdJsonSpatialError> {
+        if left_on.is_empty() {
+            return Err(NdJsonSpatialError::Error(
+                "join needs at least one key".to_owned(),
+            ));
+        }
+        if left_on.len() != right_on.len() {
+            return Err(NdJsonSpatialError::Error(format!(
+                "join needs the same number of left keys ({}) and right keys ({})",
+                left_on.len(),
+                right_on.len()
+            )));
+        }
+        Ok(JoinOptions {
+            left_on,
+            right_on,
+            kind: JoinType::Inner,
+            right_fields: RightFields::Merge,
+            max_run: DEFAULT_MAX_RUN,
+        })
+    }
+}
+
+/// Parses a comma-separated key list (`--on 'd.state, d.county'`) given
+/// to `flag`.
+pub fn parse_keys(flag: &str, src: &str) -> Result<Vec<CompiledExpr>, NdJsonSpatialError> {
+    let registry = FunctionRegistry::default();
+    parse_key_list(flag, src)
+        .map_err(NdJsonSpatialError::Error)?
+        .iter()
+        .map(|expr| {
+            registry
+                .resolve(expr)
+                .map_err(|e| NdJsonSpatialError::Error(format!("{}: {}", flag, e)))
+        })
+        .collect()
+}
+
+/// Parses one key in the old selector syntax of `--ref-fields` and
+/// `--stream-fields`.
+pub fn parse_legacy_key(flag: &str, src: &str) -> Result<CompiledExpr, NdJsonSpatialError> {
+    legacy_selector(src)
+        .map(CompiledExpr::Select)
+        .ok_or_else(|| NdJsonSpatialError::Error(format!("{}: invalid selector {:?}", flag, src)))
+}
+
+/// Parses the `--into` path: a selector made only of field names.
+pub fn parse_into(src: &str) -> Result<Vec<String>, NdJsonSpatialError> {
+    let invalid = || {
+        NdJsonSpatialError::Error(format!(
+            "--into: expected a path of field names like d.right, got {:?}",
+            src
+        ))
+    };
+    let path = legacy_selector(src).ok_or_else(invalid)?;
+    if path.is_empty() {
+        return Err(invalid());
+    }
+    path.into_iter()
+        .map(|step| match step {
+            Selector::Identifier(name) => Ok(name),
+            Selector::Index(_) => Err(invalid()),
+        })
+        .collect()
+}
+
+/// One join input and the name errors call it by.
+pub struct Input<'a, R> {
+    pub name: &'a str,
+    pub reader: R,
+}
+
+impl<'a, R: BufRead> Input<'a, R> {
+    pub fn new(name: &'a str, reader: R) -> Self {
+        Input { name, reader }
+    }
+}
+
+/// A join key that failed to evaluate.
+#[derive(Debug, PartialEq)]
+pub struct KeyError {
+    pub input: String,
+    /// 1-based line number.
+    pub line: u64,
+    pub error: EvalError,
+}
+
+/// What a join noticed along the way.
+#[derive(Debug, Default, PartialEq)]
+pub struct JoinSummary {
+    /// Records whose key failed to evaluate. They never match.
+    pub key_errors: u64,
+    pub first_key_error: Option<KeyError>,
+}
+
+/// Merge joins `left` and `right`, which must both be sorted ascending by
+/// their keys (as `ndjson sort -k` sorts them); a record out of order is an
+/// error naming its input and line.
+///
+/// Output follows key order. For each key, every left record is written
+/// with each right record in turn, so memory holds the right records of
+/// one key at a time, at most `options.max_run` of them.
+pub fn merge_join<L: BufRead, R: BufRead, O: Write>(
+    left: Input<L>,
+    right: Input<R>,
+    output: &mut O,
+    options: &JoinOptions,
+) -> Result<JoinSummary, NdJsonSpatialError> {
+    let mut summary = JoinSummary::default();
+    let kind = options.kind;
+    let mut left = Side::new(left, &options.left_on, true);
+    let mut right = Side::new(right, &options.right_on, true);
+    let mut l = left.next(&mut summary)?;
+    let mut r = right.next(&mut summary)?;
+
+    loop {
+        let order = match (&l, &r) {
+            (None, None) => break,
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(a), Some(b)) => match a.key.cmp(&b.key) {
+                Ordering::Equal if !a.joinable => Ordering::Less,
+                order => order,
+            },
+        };
+        match order {
+            Ordering::Less => {
+                if r.is_none() && !kind.keeps_unmatched_left() {
+                    break;
+                }
+                let row = l.take().expect("left is ahead");
+                if kind.keeps_unmatched_left() && !write_record(output, &row.line)? {
+                    return Ok(summary);
+                }
+                l = left.next(&mut summary)?;
+            }
+            Ordering::Greater => {
+                if l.is_none() && !kind.keeps_unmatched_right() {
+                    break;
+                }
+                let row = r.take().expect("right is ahead");
+                if kind.keeps_unmatched_right() && !write_right(output, &row, options)? {
+                    return Ok(summary);
+                }
+                r = right.next(&mut summary)?;
+            }
+            Ordering::Equal => {
+                let key = l.as_ref().expect("keys are equal").key.clone();
+                let mut run = Vec::new();
+                while let Some(row) = r.take() {
+                    if row.key != key {
+                        r = Some(row);
+                        break;
+                    }
+                    if kind.pairs() {
+                        if run.len() == options.max_run {
+                            return Err(NdJsonSpatialError::Error(format!(
+                                "{} line {}: more than {} records share one join key; \
+                                 raise --max-run",
+                                right.name, row.line_no, options.max_run
+                            )));
+                        }
+                        run.push(row.record);
+                    }
+                    r = right.next(&mut summary)?;
+                }
+                while let Some(row) = l.take() {
+                    if row.key != key {
+                        l = Some(row);
+                        break;
+                    }
+                    if !write_matches(output, &row, &run, options)? {
+                        return Ok(summary);
+                    }
+                    l = left.next(&mut summary)?;
+                }
+            }
+        }
+    }
+    flush(output)?;
+    Ok(summary)
+}
+
+/// Joins each record of `left`, in input order, to the records of
+/// `reference` with the same key. `reference` is loaded into memory; neither
+/// input needs to be sorted. Supports inner, `--left`, `--semi` and
+/// `--anti` joins.
+pub fn hash_join<L: BufRead, R: BufRead, O: Write>(
+    left: Input<L>,
+    reference: Input<R>,
+    output: &mut O,
+    options: &JoinOptions,
+) -> Result<JoinSummary, NdJsonSpatialError> {
+    let kind = options.kind;
+    if matches!(kind, JoinType::Right | JoinType::Outer) {
+        return Err(NdJsonSpatialError::Error(
+            "--ref supports inner, --left, --semi and --anti joins; \
+             sort both inputs and merge join them for --right or --outer"
+                .to_owned(),
+        ));
+    }
+    let mut summary = JoinSummary::default();
+
+    let mut references: HashMap<Vec<u8>, Vec<Map<String, Value>>> = HashMap::new();
+    let mut reference = Side::new(reference, &options.right_on, false);
+    while let Some(row) = reference.next(&mut summary)? {
+        if row.joinable {
+            let matches = references.entry(row.key).or_default();
+            if kind.pairs() {
+                matches.push(row.record);
+            }
+        }
+    }
+
+    let mut left = Side::new(left, &options.left_on, false);
+    while let Some(row) = left.next(&mut summary)? {
+        let written = match references.get(&row.key).filter(|_| row.joinable) {
+            Some(matches) => write_matches(output, &row, matches, options)?,
+            None if kind.keeps_unmatched_left() => write_record(output, &row.line)?,
+            None => true,
+        };
+        if !written {
+            return Ok(summary);
+        }
+    }
+    flush(output)?;
+    Ok(summary)
+}
+
+/// Writes what `left` and its matches `right` produce. Returns `Ok(false)`
+/// once the output has gone away.
+fn write_matches<O: Write>(
+    output: &mut O,
+    left: &Row,
+    right: &[Map<String, Value>],
+    options: &JoinOptions,
+) -> Result<bool, NdJsonSpatialError> {
+    match options.kind {
+        JoinType::Semi => write_record(output, &left.line),
+        JoinType::Anti => Ok(true),
+        _ => {
+            for r in right {
+                let mut joined = left.record.clone();
+                add_right(&mut joined, r, &options.right_fields);
+                if !write_object(output, joined)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+    }
+}
+
+/// Writes a right record that matched nothing, shaped as it would be in a
+/// joined record.
+fn write_right<O: Write>(
+    output: &mut O,
+    row: &Row,
+    options: &JoinOptions,
+) -> Result<bool, NdJsonSpatialError> {
+    if options.right_fields == RightFields::Merge {
+        return write_record(output, &row.line);
+    }
+    let mut record = Map::new();
+    add_right(&mut record, &row.record, &options.right_fields);
+    write_object(output, record)
+}
+
+fn add_right(joined: &mut Map<String, Value>, right: &Map<String, Value>, fields: &RightFields) {
+    match fields {
+        RightFields::Merge => {
+            for (k, v) in right {
+                joined.insert(k.clone(), v.clone());
+            }
+        }
+        RightFields::Prefix(prefix) => {
+            for (k, v) in right {
+                joined.insert(format!("{}{}", prefix, k), v.clone());
+            }
+        }
+        RightFields::Into(path) => {
+            let (last, parents) = path.split_last().expect("--into path is not empty");
+            let mut object = joined;
+            for name in parents {
+                let entry = object
+                    .entry(name.clone())
+                    .or_insert_with(|| Value::Object(Map::new()));
+                if !entry.is_object() {
+                    *entry = Value::Object(Map::new());
+                }
+                object = entry.as_object_mut().expect("entry is an object");
+            }
+            object.insert(last.clone(), Value::Object(right.clone()));
+        }
+    }
+}
+
+fn write_object<O: Write>(
+    output: &mut O,
+    record: Map<String, Value>,
+) -> Result<bool, NdJsonSpatialError> {
+    let line = serde_json::to_vec(&Value::Object(record))
+        .map_err(|e| NdJsonSpatialError::Error(format!("unable to write a record: {}", e)))?;
+    write_record(output, &line)
+}
+
+/// A parsed record and its encoded key.
+struct Row {
+    line_no: u64,
+    line: Vec<u8>,
+    record: Map<String, Value>,
+    key: Vec<u8>,
+    joinable: bool,
+}
+
+/// Reads the records of one input and computes their keys, optionally
+/// checking that the keys never decrease.
+struct Side<'a, R> {
+    name: &'a str,
+    reader: R,
+    keys: &'a [CompiledExpr],
+    check_order: bool,
+    line_no: u64,
+    last_key: Option<Vec<u8>>,
+}
+
+impl<'a, R: BufRead> Side<'a, R> {
+    fn new(input: Input<'a, R>, keys: &'a [CompiledExpr], check_order: bool) -> Self {
+        Side {
+            name: input.name,
+            reader: input.reader,
+            keys,
+            check_order,
+            line_no: 0,
+            last_key: None,
+        }
+    }
+
+    fn next(&mut self, summary: &mut JoinSummary) -> Result<Option<Row>, NdJsonSpatialError> {
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            if self.reader.read_until(b'\n', &mut line).map_err(io_error)? == 0 {
+                return Ok(None);
+            }
+            self.line_no += 1;
+            let trimmed = line.trim_ascii();
+            if !trimmed.is_empty() {
+                line = trimmed.to_vec();
+                break;
+            }
+        }
+
+        let value: Value = serde_json::from_slice(&line)
+            .map_err(|e| self.error(format!("invalid JSON: {}", e)))?;
+        let mut key = Vec::new();
+        let mut joinable = true;
+        for expr in self.keys {
+            let component = match expr.eval(&value) {
+                Ok(v) => v,
+                Err(error) => {
+                    summary.key_errors += 1;
+                    summary.first_key_error.get_or_insert(KeyError {
+                        input: self.name.to_owned(),
+                        line: self.line_no,
+                        error,
+                    });
+                    joinable = false;
+                    Value::Null
+                }
+            };
+            joinable &= !matches!(component, Value::Null | Value::Array(_) | Value::Object(_));
+            memcomparable::encode(&component, false, &mut key);
+        }
+        let record = match value {
+            Value::Object(record) => record,
+            _ => return Err(self.error("not a JSON object".to_owned())),
+        };
+
+        if self.check_order {
+            if self.last_key.as_ref().is_some_and(|last| key < *last) {
+                return Err(self.error(
+                    "not sorted by the join key; sort the input by the join key \
+                     (ndjson sort -k ...) or use --ref for an unsorted lookup file"
+                        .to_owned(),
+                ));
+            }
+            self.last_key = Some(key.clone());
+        }
+
+        Ok(Some(Row {
+            line_no: self.line_no,
+            line,
+            record,
+            key,
+            joinable,
+        }))
+    }
+
+    fn error(&self, message: String) -> NdJsonSpatialError {
+        NdJsonSpatialError::Error(format!("{} line {}: {}", self.name, self.line_no, message))
+    }
 }
 
 /// A JSON value with a total order:
@@ -249,200 +633,312 @@ impl From<Value> for OrderedValue {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_join_simple() {
-        let mut input = "{ \"foo\": 1, \"bar\": 2 }\n".as_bytes();
+    fn options(on: &str, kind: JoinType) -> JoinOptions {
+        let keys = parse_keys("--on", on).unwrap();
+        let mut options = JoinOptions::new(keys.clone(), keys).unwrap();
+        options.kind = kind;
+        options
+    }
 
-        let mut file = "{ \"baz\": 3, \"foo\": 1}\n".as_bytes();
-
+    fn merge(left: &str, right: &str, options: &JoinOptions) -> Result<String, String> {
         let mut output = vec![];
-
-        join(
-            &mut file,
-            vec![vec![Selector::Identifier("foo".to_owned())]],
-            vec![vec![Selector::Identifier("foo".to_owned())]],
-            &mut input,
+        merge_join(
+            Input::new("left", left.as_bytes()),
+            Input::new("right", right.as_bytes()),
             &mut output,
+            options,
         )
-        .unwrap();
+        .map_err(|NdJsonSpatialError::Error(e)| e)?;
+        Ok(String::from_utf8(output).unwrap())
+    }
 
+    fn hash(left: &str, reference: &str, options: &JoinOptions) -> Result<String, String> {
+        let mut output = vec![];
+        hash_join(
+            Input::new("left", left.as_bytes()),
+            Input::new("reference", reference.as_bytes()),
+            &mut output,
+            options,
+        )
+        .map_err(|NdJsonSpatialError::Error(e)| e)?;
+        Ok(String::from_utf8(output).unwrap())
+    }
+
+    /// Runs both join algorithms and checks they agree.
+    fn both(left: &str, right: &str, options: &JoinOptions) -> String {
+        let merged = merge(left, right, options).unwrap();
+        assert_eq!(hash(left, right, options).unwrap(), merged);
+        merged
+    }
+
+    const LEFT: &str = concat!(
+        "{\"id\": null, \"l\": 0}\n",
+        "{\"id\": 1, \"l\": 1}\n",
+        "{\"id\": 2, \"l\": 2}\n",
+        "{\"id\": 2, \"l\": 3}\n",
+        "{\"id\": 4, \"l\": 4}\n",
+    );
+    const RIGHT: &str = concat!(
+        "{\"id\": null, \"r\": 0}\n",
+        "{\"id\": 2, \"r\": 1}\n",
+        "{\"id\": 2.0, \"r\": 2}\n",
+        "{\"id\": 3, \"r\": 3}\n",
+        "{\"id\": 4, \"r\": 4}\n",
+    );
+
+    #[test]
+    fn test_inner() {
         assert_eq!(
-            output,
-            "{\"foo\":1,\"bar\":2,\"baz\":3}\n".as_bytes().to_vec()
+            both(LEFT, RIGHT, &options("d.id", JoinType::Inner)),
+            concat!(
+                "{\"id\":2,\"l\":2,\"r\":1}\n",
+                "{\"id\":2.0,\"l\":2,\"r\":2}\n",
+                "{\"id\":2,\"l\":3,\"r\":1}\n",
+                "{\"id\":2.0,\"l\":3,\"r\":2}\n",
+                "{\"id\":4,\"l\":4,\"r\":4}\n",
+            )
         );
     }
 
     #[test]
-    fn test_join_non_unique() {
-        let mut input = "{ \"foo\": 1, \"bar\": 2}\n".as_bytes();
-
-        let mut ref_file = "{ \"baz\": 3, \"foo\": 1}\n{\"foo\": 1, \"baz\": 2}\n".as_bytes();
-
-        let mut output = vec![];
-
-        join(
-            &mut ref_file,
-            vec![vec![Selector::Identifier("foo".to_owned())]],
-            vec![vec![Selector::Identifier("foo".to_owned())]],
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
+    fn test_left() {
         assert_eq!(
-            output,
-            "{\"foo\":1,\"bar\":2,\"baz\":3}\n{\"foo\":1,\"bar\":2,\"baz\":2}\n"
-                .as_bytes()
-                .to_vec()
+            both(LEFT, RIGHT, &options("d.id", JoinType::Left)),
+            concat!(
+                "{\"id\": null, \"l\": 0}\n",
+                "{\"id\": 1, \"l\": 1}\n",
+                "{\"id\":2,\"l\":2,\"r\":1}\n",
+                "{\"id\":2.0,\"l\":2,\"r\":2}\n",
+                "{\"id\":2,\"l\":3,\"r\":1}\n",
+                "{\"id\":2.0,\"l\":3,\"r\":2}\n",
+                "{\"id\":4,\"l\":4,\"r\":4}\n",
+            )
         );
     }
 
     #[test]
-    fn test_join_multiple_fields() {
-        let mut input = "{ \"foo\": 1, \"bub\": 2, \"bar\": 2 }\n".as_bytes();
-
-        let mut ref_file = "{ \"baz\": 3, \"bub\": 2, \"foo\": 1}\n".as_bytes();
-
-        let mut output = vec![];
-
-        join(
-            &mut ref_file,
-            vec![
-                vec![Selector::Identifier("foo".to_owned())],
-                vec![Selector::Identifier("bub".to_owned())],
-            ],
-            vec![
-                vec![Selector::Identifier("foo".to_owned())],
-                vec![Selector::Identifier("bub".to_owned())],
-            ],
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
+    fn test_right_and_outer() {
         assert_eq!(
-            output,
-            "{\"foo\":1,\"bub\":2,\"bar\":2,\"baz\":3}\n"
-                .as_bytes()
-                .to_vec()
+            merge(LEFT, RIGHT, &options("d.id", JoinType::Right)).unwrap(),
+            concat!(
+                "{\"id\": null, \"r\": 0}\n",
+                "{\"id\":2,\"l\":2,\"r\":1}\n",
+                "{\"id\":2.0,\"l\":2,\"r\":2}\n",
+                "{\"id\":2,\"l\":3,\"r\":1}\n",
+                "{\"id\":2.0,\"l\":3,\"r\":2}\n",
+                "{\"id\": 3, \"r\": 3}\n",
+                "{\"id\":4,\"l\":4,\"r\":4}\n",
+            )
         );
-
-        let mut input = "{\"country\": \"USA\",\"state\":\"California\",\"county\": \"Alameda\", \"color\": null}\n".as_bytes();
-
-        let mut ref_file = "{\"county\": \"Alameda\", \"country\": \"USA\", \"state\": \"California\", \"brand\": [1,2,3,4]}\n".as_bytes();
-
-        let mut output = vec![];
-
-        join(
-            &mut ref_file,
-            vec![
-                vec![Selector::Identifier("country".to_owned())],
-                vec![Selector::Identifier("state".to_owned())],
-                vec![Selector::Identifier("county".to_owned())],
-            ],
-            vec![
-                vec![Selector::Identifier("country".to_owned())],
-                vec![Selector::Identifier("state".to_owned())],
-                vec![Selector::Identifier("county".to_owned())],
-            ],
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
         assert_eq!(
-            output,
-            "{\"country\":\"USA\",\"state\":\"California\",\"county\":\"Alameda\",\"color\":null,\"brand\":[1,2,3,4]}\n".as_bytes().to_vec()
+            merge(LEFT, RIGHT, &options("d.id", JoinType::Outer)).unwrap(),
+            concat!(
+                "{\"id\": null, \"l\": 0}\n",
+                "{\"id\": null, \"r\": 0}\n",
+                "{\"id\": 1, \"l\": 1}\n",
+                "{\"id\":2,\"l\":2,\"r\":1}\n",
+                "{\"id\":2.0,\"l\":2,\"r\":2}\n",
+                "{\"id\":2,\"l\":3,\"r\":1}\n",
+                "{\"id\":2.0,\"l\":3,\"r\":2}\n",
+                "{\"id\": 3, \"r\": 3}\n",
+                "{\"id\":4,\"l\":4,\"r\":4}\n",
+            )
         );
-    }
-
-    fn ident(name: &str) -> Vec<Selector> {
-        vec![Selector::Identifier(name.to_owned())]
-    }
-
-    fn run_join(reference: &str, fields: &[&str], stream: &str) -> String {
-        let fields: Vec<Vec<Selector>> = fields.iter().map(|f| ident(f)).collect();
-        let mut output = vec![];
-        join(
-            &mut reference.as_bytes(),
-            fields.clone(),
-            fields,
-            stream.as_bytes(),
-            &mut output,
-        )
-        .unwrap();
-        String::from_utf8(output).unwrap()
     }
 
     #[test]
-    fn test_join_composite_key_requires_every_field_to_match() {
-        let reference = concat!(
+    fn test_semi_and_anti() {
+        assert_eq!(
+            both(LEFT, RIGHT, &options("d.id", JoinType::Semi)),
+            concat!(
+                "{\"id\": 2, \"l\": 2}\n",
+                "{\"id\": 2, \"l\": 3}\n",
+                "{\"id\": 4, \"l\": 4}\n",
+            )
+        );
+        assert_eq!(
+            both(LEFT, RIGHT, &options("d.id", JoinType::Anti)),
+            concat!("{\"id\": null, \"l\": 0}\n", "{\"id\": 1, \"l\": 1}\n")
+        );
+    }
+
+    #[test]
+    fn test_hash_join_keeps_left_order() {
+        let left = "{\"id\": 4}\n{\"id\": 1}\n{\"id\": 2}\n";
+        let reference = "{\"id\": 2, \"r\": 2}\n{\"id\": 4, \"r\": 4}\n";
+        assert_eq!(
+            hash(left, reference, &options("d.id", JoinType::Left)).unwrap(),
+            "{\"id\":4,\"r\":4}\n{\"id\": 1}\n{\"id\":2,\"r\":2}\n"
+        );
+    }
+
+    #[test]
+    fn test_hash_join_rejects_right_and_outer() {
+        assert!(hash("", "", &options("d.id", JoinType::Right)).is_err());
+        assert!(hash("", "", &options("d.id", JoinType::Outer)).is_err());
+    }
+
+    #[test]
+    fn test_composite_key_requires_every_field_to_match() {
+        let left = concat!(
+            "{\"state\": \"MN\", \"county\": \"Ramsey\"}\n",
+            "{\"state\": \"WI\", \"county\": \"Hennepin\"}\n",
+        );
+        let right = concat!(
             "{\"state\": \"MN\", \"county\": \"Hennepin\", \"pop\": 1}\n",
             "{\"state\": \"MN\", \"county\": \"Ramsey\", \"pop\": 2}\n",
             "{\"state\": \"WI\", \"county\": \"Ramsey\", \"pop\": 3}\n",
         );
-        let stream = concat!(
-            "{\"state\": \"MN\", \"county\": \"Ramsey\"}\n",
-            "{\"state\": \"WI\", \"county\": \"Hennepin\"}\n",
-        );
-
         assert_eq!(
-            run_join(reference, &["state", "county"], stream),
+            both(left, right, &options("d.state, d.county", JoinType::Inner)),
             "{\"state\":\"MN\",\"county\":\"Ramsey\",\"pop\":2}\n"
         );
     }
 
     #[test]
-    fn test_join_composite_key_uses_later_fields() {
-        // Previously only the first field was ever matched, because the
-        // reference reader was exhausted after building the first index.
-        let reference = "{\"a\": 1, \"b\": 1, \"r\": true}\n";
-        let stream = "{\"a\": 1, \"b\": 2}\n";
-
-        assert_eq!(run_join(reference, &["a", "b"], stream), "");
-    }
-
-    #[test]
-    fn test_join_composite_key_emits_each_match_once() {
-        let reference = "{\"a\": 1, \"b\": 2, \"r\": true}\n";
-        let stream = "{\"a\": 1, \"b\": 2}\n{\"a\": 1, \"b\": 2}\n";
-
+    fn test_different_keys_on_each_side() {
+        let left_on = parse_keys("--left-on", "d.st").unwrap();
+        let right_on = parse_keys("--right-on", "tolower(d.state)").unwrap();
+        let options = JoinOptions::new(left_on, right_on).unwrap();
         assert_eq!(
-            run_join(reference, &["a", "b"], stream),
-            "{\"a\":1,\"b\":2,\"r\":true}\n{\"a\":1,\"b\":2,\"r\":true}\n"
+            both(
+                "{\"st\": \"mn\"}\n",
+                "{\"state\": \"MN\", \"n\": 1}\n",
+                &options
+            ),
+            "{\"st\":\"mn\",\"state\":\"MN\",\"n\":1}\n"
         );
     }
 
     #[test]
-    fn test_join_numbers_match_across_representations() {
-        let reference = "{\"id\": 1.0, \"r\": true}\n";
-        let stream = "{\"id\": 1}\n";
-
-        assert_eq!(
-            run_join(reference, &["id"], stream),
-            "{\"id\":1.0,\"r\":true}\n"
-        );
+    fn test_keys_must_pair_up() {
+        let a = parse_keys("--on", "d.a, d.b").unwrap();
+        let b = parse_keys("--on", "d.a").unwrap();
+        assert!(JoinOptions::new(a, b).is_err());
+        assert!(JoinOptions::new(vec![], vec![]).is_err());
+        assert!(parse_keys("--on", "d.a as b").is_err());
+        assert!(parse_keys("--on", "sum(d.a)").is_err());
     }
 
     #[test]
-    fn test_join_skips_null_and_missing_keys() {
-        let reference = "{\"a\": null, \"b\": 1}\n{\"b\": 1}\n";
-        let stream = "{\"a\": null, \"b\": 1}\n{\"b\": 1}\n";
-
-        assert_eq!(run_join(reference, &["a", "b"], stream), "");
+    fn test_arrays_and_objects_never_match() {
+        let left = "{\"k\": [1]}\n{\"k\": {\"a\": 1}}\n";
+        assert_eq!(both(left, left, &options("d.k", JoinType::Inner)), "");
     }
 
     #[test]
-    fn test_join_rejects_mismatched_field_counts() {
+    fn test_key_errors_never_match_and_are_counted() {
+        let left = "{\"k\": \"a\"}\n{\"k\": 1}\n";
+        let right = "{\"k\": \"a\"}\n{\"k\": 1, \"r\": 1}\n";
         let mut output = vec![];
-        let result = join(
-            &mut "".as_bytes(),
-            vec![ident("a"), ident("b")],
-            vec![ident("a")],
-            "".as_bytes(),
+        let summary = merge_join(
+            Input::new("left", left.as_bytes()),
+            Input::new("right", right.as_bytes()),
             &mut output,
+            &options("d.k * 2", JoinType::Inner),
+        )
+        .unwrap();
+        assert_eq!(output, b"{\"k\":1,\"r\":1}\n");
+        assert_eq!(summary.key_errors, 2);
+        let first = summary.first_key_error.unwrap();
+        assert_eq!((first.input.as_str(), first.line), ("left", 1));
+    }
+
+    #[test]
+    fn test_unsorted_input_names_file_and_line() {
+        let unsorted = "{\"id\": 1}\n\n{\"id\": 3}\n{\"id\": 2}\n";
+        let sorted = "{\"id\": 1}\n{\"id\": 2}\n{\"id\": 3}\n";
+        let err = merge(unsorted, sorted, &options("d.id", JoinType::Inner)).unwrap_err();
+        assert!(err.starts_with("left line 4: not sorted"), "{}", err);
+        let err = merge(sorted, unsorted, &options("d.id", JoinType::Inner)).unwrap_err();
+        assert!(err.starts_with("right line 4: not sorted"), "{}", err);
+    }
+
+    #[test]
+    fn test_inner_join_stops_when_one_side_ends() {
+        // the unsorted tail of right is never read
+        let right = "{\"id\": 1}\n{\"id\": 5}\n{\"id\": 0}\n";
+        assert_eq!(
+            merge("{\"id\": 1}\n", right, &options("d.id", JoinType::Inner)).unwrap(),
+            "{\"id\":1}\n"
         );
-        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_max_run() {
+        let right = "{\"id\": 1, \"r\": 1}\n{\"id\": 1, \"r\": 2}\n{\"id\": 1, \"r\": 3}\n";
+        let mut opts = options("d.id", JoinType::Inner);
+        opts.max_run = 2;
+        let err = merge("{\"id\": 1}\n", right, &opts).unwrap_err();
+        assert!(
+            err.starts_with("right line 3: more than 2 records"),
+            "{}",
+            err
+        );
+        // semi and anti joins don't hold the run
+        opts.kind = JoinType::Semi;
+        assert_eq!(
+            merge("{\"id\": 1}\n", right, &opts).unwrap(),
+            "{\"id\": 1}\n"
+        );
+    }
+
+    #[test]
+    fn test_prefix_right() {
+        let mut opts = options("d.id", JoinType::Outer);
+        opts.right_fields = RightFields::Prefix("r_".to_owned());
+        assert_eq!(
+            merge(
+                "{\"id\": 1, \"v\": 1}\n",
+                "{\"id\": 1, \"v\": 2}\n{\"id\": 2}\n",
+                &opts
+            )
+            .unwrap(),
+            "{\"id\":1,\"v\":1,\"r_id\":1,\"r_v\":2}\n{\"r_id\":2}\n"
+        );
+    }
+
+    #[test]
+    fn test_into() {
+        let mut opts = options("d.id", JoinType::Outer);
+        opts.right_fields = RightFields::Into(parse_into("d.m.right").unwrap());
+        assert_eq!(
+            merge(
+                "{\"id\": 1, \"m\": 5}\n",
+                "{\"id\": 1, \"v\": 2}\n{\"id\": 2}\n",
+                &opts
+            )
+            .unwrap(),
+            concat!(
+                "{\"id\":1,\"m\":{\"right\":{\"id\":1,\"v\":2}}}\n",
+                "{\"m\":{\"right\":{\"id\":2}}}\n"
+            )
+        );
+        assert!(parse_into("d.a[0]").is_err());
+        assert!(parse_into("d.a + 1").is_err());
+    }
+
+    #[test]
+    fn test_legacy_keys() {
+        let key = parse_legacy_key("--ref-fields", "d.foo").unwrap();
+        let options = JoinOptions::new(vec![key.clone()], vec![key]).unwrap();
+        assert_eq!(
+            hash(
+                "{\"foo\": 1, \"bar\": 2}\n",
+                "{\"baz\": 3, \"foo\": 1}\n",
+                &options
+            )
+            .unwrap(),
+            "{\"foo\":1,\"bar\":2,\"baz\":3}\n"
+        );
+    }
+
+    #[test]
+    fn test_records_must_be_objects() {
+        let err = hash("[1]\n", "", &options("d.id", JoinType::Inner)).unwrap_err();
+        assert_eq!(err, "left line 1: not a JSON object");
+        let err = merge("{\"id\": 1}\n", "nope\n", &options("d.id", JoinType::Inner)).unwrap_err();
+        assert!(err.starts_with("right line 1: invalid JSON"), "{}", err);
     }
 
     #[test]
