@@ -310,14 +310,32 @@ pub fn ndjson_select_grouped<R: BufRead, W: Write>(
     read: &mut R,
     write: &mut W,
 ) -> Result<SelectSummary, NdJsonSpatialError> {
-    let registry = FunctionRegistry::default();
+    ndjson_select_with(
+        &FunctionRegistry::default(),
+        list,
+        mode,
+        options,
+        read,
+        write,
+    )
+}
+
+/// [`ndjson_select_grouped`] with the functions in `registry`.
+pub fn ndjson_select_with<R: BufRead, W: Write>(
+    registry: &FunctionRegistry,
+    list: &SelectList,
+    mode: OutputMode,
+    options: &GroupOptions,
+    read: &mut R,
+    write: &mut W,
+) -> Result<SelectSummary, NdJsonSpatialError> {
     let is_aggregate = !options.by.is_empty()
         || list.items.iter().any(|item| match item {
             ParsedItem::Expr { expr, .. } => registry.contains_aggregate(expr),
             ParsedItem::Star { .. } => false,
         });
     if is_aggregate {
-        return select_aggregate(&registry, list, mode, options, read, write);
+        return select_aggregate(registry, list, mode, options, read, write);
     }
 
     let items = list

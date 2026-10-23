@@ -12,9 +12,12 @@ name = "ndjson-spatial"
 clap = "4.6"
 gdal = "0.19"
 geo = "0.33"
-geos = { version = "11.3", features = ["geo"] }
+geos = { version = "11.3", features = ["geo", "v3_8_0"] }
 geo-types = "0.7"
 geojson = { version = "1.0", features = ["geo-types"] }
+h3o = "0.11"
+ndjson = { path = "../ndjson" }
 ndjson-common = { path = "../ndjson-common", features = ["spatial"] }
+rmath-ast = { path = "../rmath-ast" }
 rstar = "0.13"
 serde_json = "^1.0"

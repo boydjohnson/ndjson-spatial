@@ -87,4 +87,5 @@ Every command in [01-commands.md](01-commands.md) is tagged with one of:
 6. **Small S0/S1 commands** — `head`, `tail`, `sample`, `uniq`, `top`,
    `explode`, `flatten`, `to-csv`, `describe`.
 7. **Spatial** — spatial functions in expressions; S0 geometry commands;
-   clap 4 / geo upgrade.
+   clap 4 / geo upgrade. (Upgrades, `join-contains` and the functions done;
+   shorthand commands, `explode-multi`, `validate` next.)

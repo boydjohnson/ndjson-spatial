@@ -28,6 +28,11 @@ ndjson-spatial select '*, geohash(d.geometry, 6) as cell' \
 ndjson-spatial select 'extent(d.geometry)'
 ```
 
+Status: done. `ndjson-spatial select`, `filter` and `sort` are the `ndjson`
+commands with these functions registered on top of the built-ins
+(`ndjson-spatial/src/functions.rs`), so `--by` keys and sort keys can use
+them too. A geometry argument is a GeoJSON geometry or a Feature.
+
 ### Scalar (S0)
 
 | Function | Returns |
@@ -38,7 +43,7 @@ ndjson-spatial select 'extent(d.geometry)'
 | `x(p)`, `y(p)` | coordinates of a Point |
 | `geom_type(g)`, `num_points(g)`, `is_valid(g)`, `is_empty(g)` | |
 | `simplify(g, tol)`, `buffer(g, d)`, `convex_hull(g)`, `make_valid(g)` | geometry |
-| `transform(g, "EPSG:4326", "EPSG:3857")` | geometry (existing `transform` command's logic) |
+| `transform(g, "EPSG:4326", "EPSG:3857")` | geometry (existing `transform` command's logic); any CRS GDAL accepts |
 | `distance(g, wkt)`, `intersects(g, wkt)`, `contains(g, wkt)`, `within(g, wkt)` | against a literal geometry |
 | `to_wkt(g)`, `from_wkt(s)` | |
 | `geohash(g, precision)`, `quadkey(g, zoom)`, `h3(g, res)` | cell id of the centroid (or point) |
@@ -49,7 +54,7 @@ ndjson-spatial select 'extent(d.geometry)'
 |----------|-------|
 | `extent(g)` | running bbox |
 | `centroid_agg(g)` | weighted running sum |
-| `union_agg(g)` | **S2** — grows with geometry complexity; behind `--allow-unbounded` |
+| `union_agg(g)` | **S2** — grows with geometry complexity; behind `--allow-unbounded`. Unions in batches of 256. |
 
 ## Commands
 
