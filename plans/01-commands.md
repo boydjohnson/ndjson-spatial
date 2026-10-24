@@ -13,8 +13,8 @@ Space classes are defined in [README.md](README.md#space-classes).
 | `from-json <selector>` | S0 | exists | Streams an array inside a JSON document via yajlish. |
 | `from-csv [-d delim]` | S0 | change | Add `--no-header`, `--infer/--strings` (today infers types per cell). Make delimiter a flag, not a positional. |
 | `to-csv [--columns a,b]` | S0 / S1 | new | With `--columns`, S0. Without, infer header from the first *k* records (`--infer-rows 100`, S1); keys first seen later are an error or dropped (`--extra=drop`). |
-| `to-json` | S0 | new | Wrap the stream in `[ ... ]`. |
-| `validate` | S0 | new | Exit non-zero on the first unparsable line; `--count` reports totals. |
+| `to-json` | S0 | exists | Done: wraps the stream in `[ ... ]`, one record per line, records passed through unparsed. |
+| `validate` | S0 | exists | Done: exits 1 at the first unparsable line, naming its line number; `--count` reads to the end and writes `{"records": n, "invalid": m}`. |
 
 ### Row-wise (one record → 0..n records)
 
@@ -23,19 +23,19 @@ Space classes are defined in [README.md](README.md#space-classes).
 | `filter <expr>` | S0 | exists | Done: on the shared expression grammar, with `and`/`or`/`not`, computed comparisons (`d.a * 2 > d.b`), `in [..]`, `is null`, and function calls. Old `d.x == Virtual Currency` (unquoted string) syntax keeps working. Records that fail to evaluate are skipped and summarised on stderr. |
 | `select <exprs>` | S0 | exists | Done (scalar mode): projection, computed fields, `as` aliases, `*` / `* except (..)`, `-r/--raw`, `--tsv`. Keys keep select-list order; evaluation errors become `null` and are summarised on stderr. Aggregate mode is done too (see below). Not yet: `--strict`. See [02](02-select-and-expressions.md). |
 | `pick-field <selector>` | S0 | deprecate | Alias for `select -r <selector>`. |
-| `explode <selector>` | S0 | new | One output record per element of an array field (`unnest`). `--keep-empty` emits one record with null. |
-| `flatten [--sep .]` | S0 | new | Nested objects → dotted keys; `unflatten` is the inverse. Useful before `to-csv`. |
-| `uniq [-c] [--by expr]` | S0 | new | Drop *adjacent* duplicates, like `uniq(1)`. `-c` adds a count field. |
+| `explode <selector>` | S0 | exists | Done: one output record per element of an array field (`unnest`). Missing, null and `[]` drop the record; `--keep-empty` emits it once with null. A non-array value passes through. |
+| `flatten [--sep .]` | S0 | exists | Done: nested objects → dotted keys (`--arrays` also flattens arrays by index); `unflatten` is the inverse for objects and skips records whose keys collide. Useful before `to-csv`. |
+| `uniq [-c] [--by expr]` | S0 | exists | Done: drops *adjacent* duplicates, like `uniq(1)`, comparing JSON values the way `sort -u` does. `-c` adds a leading count field (`--count-field`; non-objects are wrapped as `{"count", "value"}`); `-d`/`-u` keep only repeated/unique runs. |
 
 ### Bounded-window
 
 | Command | Class | Status | Notes |
 |---------|-------|--------|-------|
-| `head [-n 10]` | S1 | new | Exits early so upstream gets SIGPIPE. |
-| `tail [-n 10]` | S1 | new | Ring buffer of *n* records. |
-| `skip -n N` | S0 | new | Offset. |
-| `sample -n K` / `sample --rate p` | S1 / S0 | new | Reservoir sampling (Algorithm L) / Bernoulli. `--seed` for reproducibility. |
-| `top -k K --by <expr> [--desc]` | S1 | new | Bounded heap; the O(k) answer to `sort | head`. With `--by-group`, see [03](03-grouping-and-aggregation.md). |
+| `head [-n 10]` | S1 | exists | Exits early so upstream gets SIGPIPE. |
+| `tail [-n 10]` | S1 | exists | Ring buffer of *n* records. |
+| `skip -n N` | S0 | exists | Done. Offset. |
+| `sample -n K` / `sample --rate p` | S1 / S0 | exists | Done: reservoir sampling (Algorithm L) / Bernoulli, output in input order. `--seed` for reproducibility. |
+| `top -k K --by <expr> [--desc]` | S1 | exists | Done: bounded heap; the O(k) answer to `sort | head`, same output (stable ties, `:d` keys, repeatable `--by`). Not yet: `--by-group`, see [03](03-grouping-and-aggregation.md). |
 
 ### Aggregation
 

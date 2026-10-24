@@ -85,7 +85,10 @@ Every command in [01-commands.md](01-commands.md) is tagged with one of:
 5. **External sort + merge join** — replace `sort`/`join` internals; keep hash
    join behind `--ref`. (External sort done; merge join next.)
 6. **Small S0/S1 commands** — `head`, `tail`, `sample`, `uniq`, `top`,
-   `explode`, `flatten`, `to-csv`, `describe`.
+   `explode`, `flatten`, `to-csv`, `describe`. (Done: `head`, `tail`, `skip`,
+   `sample`, `uniq`, `top`, `explode`, `flatten`/`unflatten`, `to-json`,
+   `validate`. Left: `to-csv`, `from-csv` flags, `partition`, `describe`,
+   `pick-field` as a `select -r` alias.)
 7. **Spatial** — spatial functions in expressions; S0 geometry commands;
    clap 4 / geo upgrade. (Upgrades, `join-contains` and the functions done;
    shorthand commands, `explode-multi`, `validate` next.)

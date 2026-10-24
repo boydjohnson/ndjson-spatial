@@ -67,3 +67,66 @@ pub(crate) fn write_record<O: Write>(
 pub(crate) fn io_error(e: std::io::Error) -> NdJsonSpatialError {
     NdJsonSpatialError::Error(format!("IO error: {}", e))
 }
+
+/// Records a command skipped because it couldn't handle them.
+#[derive(Debug, Default, PartialEq)]
+pub struct Skipped {
+    pub count: u64,
+    /// The first one: 1-based record number and why.
+    pub first: Option<(u64, String)>,
+}
+
+impl Skipped {
+    pub(crate) fn add(&mut self, n: u64, reason: String) {
+        self.count += 1;
+        self.first.get_or_insert((n, reason));
+    }
+}
+
+/// Calls `f` with the 1-based number and parsed value of each record. A
+/// record that isn't JSON is skipped and noted in the returned `Skipped`,
+/// as is one for which `f` returns `Err(reason)`.
+pub(crate) fn for_each_value<I, F>(input: &mut I, mut f: F) -> Result<Skipped, NdJsonSpatialError>
+where
+    I: BufRead,
+    F: FnMut(u64, serde_json::Value) -> Result<Result<Flow, String>, NdJsonSpatialError>,
+{
+    let mut skipped = Skipped::default();
+    let mut n = 0;
+    for_each_record(input, |line| {
+        n += 1;
+        let value = match serde_json::from_slice(line) {
+            Ok(value) => value,
+            Err(e) => {
+                skipped.add(n, format!("invalid JSON: {}", e));
+                return Ok(Flow::Continue);
+            }
+        };
+        match f(n, value)? {
+            Ok(flow) => Ok(flow),
+            Err(reason) => {
+                skipped.add(n, reason);
+                Ok(Flow::Continue)
+            }
+        }
+    })?;
+    Ok(skipped)
+}
+
+/// Writes `value` as one record; `Ok(false)` once the reader has gone away.
+pub(crate) fn write_value<O: Write>(
+    output: &mut O,
+    value: &serde_json::Value,
+) -> Result<bool, NdJsonSpatialError> {
+    let line = serde_json::to_vec(value)
+        .map_err(|e| NdJsonSpatialError::Error(format!("unable to write a record: {}", e)))?;
+    write_record(output, &line)
+}
+
+pub(crate) fn flow(written: bool) -> Flow {
+    if written {
+        Flow::Continue
+    } else {
+        Flow::Stop
+    }
+}
