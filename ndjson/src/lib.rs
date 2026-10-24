@@ -1,4 +1,5 @@
 pub mod aggregate;
+pub mod cli;
 pub mod explode;
 pub mod filter;
 pub mod flatten;

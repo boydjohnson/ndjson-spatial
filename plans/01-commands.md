@@ -71,8 +71,9 @@ Summary only; details in [05-spatial.md](05-spatial.md).
 | `from-geojson`, `to-geojson` | S0 | exists |
 | `centroid`, `area`, `transform` | S0 | exists → fold into expression functions, keep commands as shorthands |
 | `length`, `bbox`, `simplify`, `buffer`, `convex-hull`, `make-valid`, `explode-multi` | S0 | new |
-| `extent` | S0 | new (aggregate) |
-| `geohash` / `quadkey` / `h3` cell assignment | S0 | new (as functions) |
+| `extent` | S0 | done (aggregate function) |
+| `geohash` / `quadkey` / `h3` cell assignment | S0 | done (as functions) |
+| `select`, `filter`, `sort` with geometry functions | S0 / Disk | done |
 | `join-contains --ref` | S2 (ref in R-tree) | done: `--within`, `--left`/`--semi`/`--anti`, `--into` |
 | `intersection --ref`, `nearest-distance --ref` | S2 (ref in R-tree) | exists → change to the shared `--ref`/`--on` conventions |
 

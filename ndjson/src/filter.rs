@@ -58,8 +58,17 @@ pub fn ndjson_filter<R: BufRead, W: Write>(
     read: &mut R,
     write: &mut W,
 ) -> Result<FilterSummary, NdJsonSpatialError> {
-    let registry = FunctionRegistry::default();
-    let predicate = compile_filter(&registry, &expression).map_err(|e| {
+    ndjson_filter_with(&FunctionRegistry::default(), &expression, read, write)
+}
+
+/// [`ndjson_filter`] with the functions in `registry`.
+pub fn ndjson_filter_with<R: BufRead, W: Write>(
+    registry: &FunctionRegistry,
+    expression: &str,
+    read: &mut R,
+    write: &mut W,
+) -> Result<FilterSummary, NdJsonSpatialError> {
+    let predicate = compile_filter(registry, expression).map_err(|e| {
         NdJsonSpatialError::Error(format!("invalid filter {:?}: {}", expression, e))
     })?;
 

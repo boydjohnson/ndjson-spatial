@@ -62,6 +62,12 @@ pub enum EvalError {
     NotScalar {
         func: &'static str,
     },
+    /// A function rejected its arguments for a reason of its own (a
+    /// geometry that isn't valid GeoJSON, an unknown CRS).
+    Invalid {
+        func: &'static str,
+        message: String,
+    },
 }
 
 impl fmt::Display for EvalError {
@@ -87,6 +93,7 @@ impl fmt::Display for EvalError {
             EvalError::NotScalar { func } => {
                 write!(f, "{}() is an aggregate and needs a group of records", func)
             }
+            EvalError::Invalid { func, message } => write!(f, "{}(): {}", func, message),
         }
     }
 }
