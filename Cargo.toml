@@ -11,3 +11,10 @@ members = [
 inherits = "release"
 lto = true
 codegen-units = 1
+
+# gdal 0.19.0 / gdal-sys 0.12.0 on crates.io predate GDAL 3.13 (no prebuilt
+# bindings, and the crate doesn't compile against its API). Upstream master
+# has both fixes; drop this once a release with them is published.
+[patch.crates-io]
+gdal = { git = "https://github.com/georust/gdal", rev = "c0a6266b987a2c2d44aea9956c2cae1ed71445cf" }
+gdal-sys = { git = "https://github.com/georust/gdal", rev = "c0a6266b987a2c2d44aea9956c2cae1ed71445cf" }
