@@ -42,6 +42,7 @@ ls -lh ../target/release-ndjson/ndjson
 ```bash
     ndjson-spatial area --field-name <field-name>
 ```
+    - square meters from lon/lat (geodesic); `--planar` for projected coordinates
 
 ```bash
     ndjson-spatial from-geojson

@@ -112,8 +112,9 @@ fn main() {
             .into();
 
         let bbox = args.get_flag("bbox");
+        let planar = args.get_flag("planar");
 
-        if let Err(e) = area::NdjsonSpatialArea::default().area(field_name, bbox) {
+        if let Err(e) = area::NdjsonSpatialArea::default().area(field_name, bbox, planar) {
             writeln!(std::io::stderr(), "{:?}", e).expect("Unable to write to stderr");
         }
     } else if let Some("to-geojson") = args.subcommand_name() {
@@ -231,7 +232,8 @@ fn to_crs_specification(epsg: Option<&str>, proj4: Option<&str>) -> CrsSpecifica
 }
 
 const SPATIAL_FUNCTIONS: &str = "Geometry functions (g is a GeoJSON geometry or Feature):\n  \
-    area length geodesic_area geodesic_length centroid point_on_surface bbox x y\n  \
+    area length (m², m from lon/lat) planar_area planar_length\n  \
+    centroid point_on_surface bbox x y\n  \
     geom_type num_points is_valid is_empty convex_hull make_valid to_wkt from_wkt\n  \
     simplify(g, tol) buffer(g, d) transform(g, from, to)\n  \
     distance intersects contains within (g, wkt or geometry)\n  \
@@ -331,7 +333,7 @@ fn parse_args() -> Command {
         )
         .subcommand(
             Command::new("area")
-                .about("compute the area of the shape represented in ndjson")
+                .about("compute the area of the shape represented in ndjson, in square meters")
                 .arg(
                     Arg::new("field-name")
                         .short('f')
@@ -346,6 +348,12 @@ fn parse_args() -> Command {
                         .long("bbox")
                         .action(ArgAction::SetTrue)
                         .help("Compute the bounding box if it does not exist"),
+                )
+                .arg(
+                    Arg::new("planar")
+                        .long("planar")
+                        .action(ArgAction::SetTrue)
+                        .help("Planar area in the units of projected coordinates, not lon/lat"),
                 ),
         )
         .subcommand(

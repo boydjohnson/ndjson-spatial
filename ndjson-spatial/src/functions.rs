@@ -26,9 +26,11 @@
 //! A geometry argument is a GeoJSON geometry object, or a Feature (its
 //! geometry is used). Geometries are returned as GeoJSON geometry objects.
 //! The second argument of `distance`, `intersects`, `contains` and `within`
-//! is a WKT string or a geometry. Planar measures are in the units of the
-//! coordinates; the `geodesic_` ones take lon/lat and return meters and
-//! square meters. Lengths of polygons are their perimeters.
+//! is a WKT string or a geometry. `area` and `length` take lon/lat, as
+//! GeoJSON coordinates are, and return square meters and meters on the
+//! WGS84 ellipsoid (`geodesic_area` and `geodesic_length` are aliases);
+//! `planar_area` and `planar_length` are in the units of the coordinates,
+//! for projected data. Lengths of polygons are their perimeters.
 
 use gdal::{
     spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef},
@@ -36,7 +38,7 @@ use gdal::{
 };
 use geo::{
     dimensions::Dimensions, Area, BoundingRect, Centroid, CoordsIter, Distance, Euclidean,
-    Geodesic, GeodesicArea, HasDimensions, Length, Point, Rect,
+    Geodesic, GeodesicArea, HasDimensions, Length, Orient, Point, Rect,
 };
 use geos::Geom;
 use ndjson_common::common::to_geo_json;
@@ -55,14 +57,12 @@ type GeoFn = fn(&'static str, &geo::Geometry<f64>) -> Result<Value, EvalError>;
 
 /// One geometry in, one value out.
 const UNARY: &[(&str, GeoFn)] = &[
-    ("area", |_, g| number("area", g.unsigned_area())),
-    ("geodesic_area", |_, g| {
-        number("geodesic_area", g.geodesic_area_unsigned())
-    }),
-    ("length", |_, g| number("length", length(g, &Euclidean))),
-    ("geodesic_length", |_, g| {
-        number("geodesic_length", length(g, &Geodesic))
-    }),
+    ("area", |f, g| number(f, geodesic_area(g))),
+    ("geodesic_area", |f, g| number(f, geodesic_area(g))),
+    ("planar_area", |f, g| number(f, g.unsigned_area())),
+    ("length", |f, g| number(f, length(g, &Geodesic))),
+    ("geodesic_length", |f, g| number(f, length(g, &Geodesic))),
+    ("planar_length", |f, g| number(f, length(g, &Euclidean))),
     ("centroid", |_, g| {
         Ok(g.centroid().map_or(Value::Null, point))
     }),
@@ -284,6 +284,21 @@ fn coordinate(
 }
 
 /// Total length of the lines, with polygons measured along their rings.
+/// The area of `g` in square meters, taking its coordinates as lon/lat.
+/// Polygons are oriented first: the geodesic area of a clockwise ring is
+/// the rest of the Earth, and ESRI and others write exteriors clockwise.
+pub fn geodesic_area(g: &geo::Geometry<f64>) -> f64 {
+    use geo::{orient::Direction, Geometry::*};
+    match g {
+        Polygon(p) => p.orient(Direction::Default).geodesic_area_unsigned(),
+        MultiPolygon(p) => p.orient(Direction::Default).geodesic_area_unsigned(),
+        Rect(r) => geodesic_area(&Polygon(r.to_polygon())),
+        Triangle(t) => geodesic_area(&Polygon(t.to_polygon())),
+        GeometryCollection(c) => c.iter().map(geodesic_area).sum(),
+        Point(_) | MultiPoint(_) | Line(_) | LineString(_) | MultiLineString(_) => 0.0,
+    }
+}
+
 fn length(g: &geo::Geometry<f64>, metric: &impl Distance<f64, Point<f64>, Point<f64>>) -> f64 {
     use geo::Geometry::*;
     match g {
@@ -644,10 +659,10 @@ mod tests {
     #[test]
     fn test_measures() {
         let r = json!({"g": square(0.0, 0.0, 2.0), "l": {"type": "LineString", "coordinates": [[0, 0], [3, 4]]}});
-        assert_eq!(eval("area(d.g)", r.clone()), Ok(json!(4.0)));
-        assert_eq!(eval("length(d.g)", r.clone()), Ok(json!(8.0)));
-        assert_eq!(eval("length(d.l)", r.clone()), Ok(json!(5.0)));
-        assert_eq!(eval("area(d.l)", r.clone()), Ok(json!(0.0)));
+        assert_eq!(eval("planar_area(d.g)", r.clone()), Ok(json!(4.0)));
+        assert_eq!(eval("planar_length(d.g)", r.clone()), Ok(json!(8.0)));
+        assert_eq!(eval("planar_length(d.l)", r.clone()), Ok(json!(5.0)));
+        assert_eq!(eval("planar_area(d.l)", r.clone()), Ok(json!(0.0)));
         assert_eq!(eval("num_points(d.g)", r.clone()), Ok(json!(5)));
         assert_eq!(
             eval("bbox(d.l)", r.clone()),
@@ -669,13 +684,30 @@ mod tests {
         assert!((m - 111_319.5).abs() < 1.0, "{}", m);
         let a = f64_of(eval("geodesic_area(d)", square(0.0, 0.0, 1.0)));
         assert!((a - 12_308_778_361.0).abs() < 1e7, "{}", a);
+        assert_eq!(eval("area(d)", square(0.0, 0.0, 1.0)), Ok(json!(a)));
+        let line = json!({"type": "LineString", "coordinates": [[0, 0], [1, 0]]});
+        assert_eq!(eval("length(d)", line), Ok(json!(m)));
+    }
+
+    #[test]
+    fn test_geodesic_area_of_clockwise_rings() {
+        // a ~105 m by ~390 m block in Minneapolis, written clockwise
+        let cw = json!({"type": "Polygon", "coordinates": [[
+            [-93.30807, 44.91183], [-93.30793, 44.90833], [-93.30933, 44.90833],
+            [-93.30933, 44.91183], [-93.30807, 44.91183]
+        ]]});
+        let a = f64_of(eval("area(d)", cw.clone()));
+        assert!((a - 40_852.0).abs() < 1.0, "{}", a);
+        let multi = json!({"type": "MultiPolygon", "coordinates": [cw["coordinates"]]});
+        let b = f64_of(eval("area(d)", multi));
+        assert!((a - b).abs() < 1e-6, "{} {}", a, b);
     }
 
     #[test]
     fn test_features_and_bad_arguments() {
         let feature =
             json!({"type": "Feature", "geometry": square(0.0, 0.0, 1.0), "properties": {}});
-        assert_eq!(eval("area(d)", feature), Ok(json!(1.0)));
+        assert_eq!(eval("planar_area(d)", feature), Ok(json!(1.0)));
         assert_eq!(eval("area(d.missing)", json!({})), Ok(Value::Null));
         assert_eq!(
             eval("area(d.s)", json!({"s": "x"})),
@@ -747,11 +779,11 @@ mod tests {
             Ok(json!("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"))
         );
         assert_eq!(
-            eval("area(from_wkt(to_wkt(d.g)))", r.clone()),
+            eval("planar_area(from_wkt(to_wkt(d.g)))", r.clone()),
             Ok(json!(4.0))
         );
         let buffered = f64_of(eval(
-            "area(buffer(from_wkt(\"POINT (0 0)\"), 1))",
+            "planar_area(buffer(from_wkt(\"POINT (0 0)\"), 1))",
             r.clone(),
         ));
         assert!(
@@ -761,7 +793,7 @@ mod tests {
         );
         assert_eq!(
             eval(
-                "area(convex_hull(from_wkt(\"MULTIPOINT (0 0, 2 0, 0 2, 2 2, 1 1)\")))",
+                "planar_area(convex_hull(from_wkt(\"MULTIPOINT (0 0, 2 0, 0 2, 2 2, 1 1)\")))",
                 r.clone()
             ),
             Ok(json!(4.0))

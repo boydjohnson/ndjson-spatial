@@ -14,8 +14,9 @@
 * limitations under the License.
 */
 
+use crate::functions::geodesic_area;
+use geo::Area;
 use geojson::GeometryValue;
-use geos::{Geom, Geometry};
 use ndjson_common::{
     common::calculate_bounding_box_if_not_exists, error::NdJsonSpatialError,
     ndjson::NdJsonGeojsonReader,
@@ -51,15 +52,26 @@ where
     IN: BufRead,
     OUT: Write,
 {
-    pub fn area(&mut self, field_name: String, bbox: bool) -> Result<(), NdJsonSpatialError> {
+    /// Adds the area of each feature's polygon or multipolygon as a
+    /// property: square meters on the WGS84 ellipsoid, or with `planar`,
+    /// square units of the coordinates.
+    pub fn area(
+        &mut self,
+        field_name: String,
+        bbox: bool,
+        planar: bool,
+    ) -> Result<(), NdJsonSpatialError> {
         for geo in NdJsonGeojsonReader::new(&mut self.std_in).flatten() {
             if let geojson::GeoJson::Feature(mut feat) = geo {
                 let area = match feat.geometry.as_ref() {
                     Some(geometry) => match geometry.value {
                         GeometryValue::MultiPolygon { .. } | GeometryValue::Polygon { .. } => {
                             let geo_geometry: geo::Geometry<f64> = geometry.try_into()?;
-                            let geos_geometry: Geometry = (&geo_geometry).try_into()?;
-                            geos_geometry.area()?
+                            if planar {
+                                geo_geometry.unsigned_area()
+                            } else {
+                                geodesic_area(&geo_geometry)
+                            }
                         }
                         GeometryValue::Point { .. } => {
                             return Err(
@@ -136,7 +148,7 @@ mod tests {
         );
 
         area_calc
-            .area("Area".to_string(), true)
+            .area("Area".to_string(), true, true)
             .expect("Able to calculate area");
         let data =
             std::str::from_utf8(&area_calc.std_out).expect("Some of the bytes were not utf-8");
@@ -151,5 +163,24 @@ mod tests {
         } else {
             panic!("Geojson was not a feature");
         }
+    }
+
+    fn area_of(line: &str, planar: bool) -> f64 {
+        let mut area_calc = NdjsonSpatialArea::<&[u8], Vec<u8>>::new(line.as_bytes(), vec![]);
+        area_calc
+            .area("area".to_string(), false, planar)
+            .expect("Able to calculate area");
+        let out: serde_json::Value =
+            serde_json::from_slice(&area_calc.std_out).expect("valid json");
+        out["properties"]["area"].as_f64().expect("a number")
+    }
+
+    #[test]
+    fn test_area_is_geodesic_by_default() {
+        // one degree square on the equator, written clockwise
+        let line = r#"{"type": "Feature", "properties": {}, "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}}"#;
+        let a = area_of(line, false);
+        assert!((a - 12_308_778_361.0).abs() < 1e7, "{}", a);
+        assert_eq!(area_of(line, true), 1.0);
     }
 }
