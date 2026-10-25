@@ -37,7 +37,7 @@ them too. A geometry argument is a GeoJSON geometry or a Feature.
 
 | Function | Returns |
 |----------|---------|
-| `area(g)`, `length(g)` | planar; `geodesic_area`, `geodesic_length` for lon/lat |
+| `area(g)`, `length(g)` | square meters and meters from lon/lat (geodesic, WGS84; `geodesic_area`, `geodesic_length` are aliases); `planar_area`, `planar_length` for projected coordinates |
 | `centroid(g)`, `point_on_surface(g)` | Point geometry |
 | `bbox(g)` | `[minx, miny, maxx, maxy]` |
 | `x(p)`, `y(p)` | coordinates of a Point |
